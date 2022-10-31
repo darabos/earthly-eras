@@ -41,6 +41,23 @@ vec3 inferno(float t) {
     return c0+t*(c1+t*(c2+t*(c3+t*(c4+t*(c5+t*c6)))));
 
 }`;
+const random = `
+// http://www.jcgt.org/published/0009/03/02/
+uvec3 random(uvec3 v) {
+    v = v * 1664525u + 1013904223u;
+    v.x += v.y*v.z;
+    v.y += v.z*v.x;
+    v.z += v.x*v.y;
+    v ^= v >> 16u;
+    v.x += v.y*v.z;
+    v.y += v.z*v.x;
+    v.z += v.x*v.y;
+    return v;
+}
+vec3 frandom(vec3 v) {
+  return vec3(random(uvec3(v*W))) * (1.0/float(0xffffffffu));
+}
+`;
 function Shader(inputs, output, code) {
   this.inputs = inputs;
   this.outputs = output;
@@ -57,16 +74,19 @@ function Shader(inputs, output, code) {
     #define W ${W}.0
     #define H ${H}.0
     ${inferno}
+    ${random}
     ${uniformDeclarations}
     varying vec2 pos;
+    uniform float time;
     void main() {
       vec4 o = vec4(0.0);
       ${code}
       gl_FragColor = o;
     }`,
   });
-  this.render = () => {
+  this.render = time => {
     quad.material = this.material;
+    this.material.uniforms.time = { value: time };
     if (output === 'display') {
       renderer.setRenderTarget(null);
       renderer.render(scene, camera);
@@ -85,10 +105,10 @@ function Shader(inputs, output, code) {
 }
 const quad = new THREE.Mesh(new THREE.PlaneBufferGeometry(2, 2, 1, 1));
 scene.add(quad);
-function animate() {
+function animate(time) {
   requestAnimationFrame(animate);
   for (const k in shaders) {
-    shaders[k].render();
+    shaders[k].render(time);
   }
 }
 
@@ -129,7 +149,8 @@ const shaders = {
     'water',
     `
     float h = texture2D(height, pos).r;
-    float w = texture2D(water, pos).r;
+    o = texture2D(water, pos);
+    float w = o.r;
     float win = 0.0;
     float wout = 0.0;
     for (float dx = -1.0; dx <= 1.0; ++dx) {
@@ -141,7 +162,9 @@ const shaders = {
         win += clamp(h2+w2-h-w, 0.0, w2);
       }
     }
-    o.r = max(0.0, w+0.1*win-0.1*wout);
+    // Add random "ripples" to counteract precision issues.
+    float rnd = 0.01 - 0.02 * frandom(vec3(pos.xy, time)).x;
+    o.r = max(0.0, w+0.05*win-0.05*wout+rnd);
     o.g = win;
     o.b = wout;
     `
@@ -158,11 +181,11 @@ const shaders = {
     'display',
     `
     float h = texture2D(height, pos).r;
-    float w = texture2D(water, pos).g*10.0 - texture2D(water, pos).b*10.0;
-    //float w = texture2D(water, pos).r;
-    o.rgb = inferno(w);
+    float w = texture2D(water, pos).r;
+    o.g = h;
+    o.b = w;
     o.a = 1.0;
     `
   ),
 };
-animate();
+animate(0);
