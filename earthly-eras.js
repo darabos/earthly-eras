@@ -10,12 +10,13 @@ resize();
 document.body.appendChild(renderer.domElement);
 window.addEventListener('resize', resize());
 const scene = new THREE.Scene();
-const W = 512;
-const H = 512;
+const W = 32;
+const H = W;
 function buffer() {
   const b = new THREE.WebGLRenderTarget(W, H);
   b.texture.generateMipmaps = true;
   b.texture.minFilter = THREE.LinearMipmapLinearFilter;
+  b.texture.magFilter = THREE.NearestFilter;
   return b;
 }
 const baseshader = {
@@ -27,19 +28,42 @@ const baseshader = {
     }
   `,
 };
+const inferno = `
+// From https://observablehq.com/@flimsyhat/webgl-color-maps.
+vec3 inferno(float t) {
+    const vec3 c0 = vec3(0.0002189403691192265, 0.001651004631001012, -0.01948089843709184);
+    const vec3 c1 = vec3(0.1065134194856116, 0.5639564367884091, 3.932712388889277);
+    const vec3 c2 = vec3(11.60249308247187, -3.972853965665698, -15.9423941062914);
+    const vec3 c3 = vec3(-41.70399613139459, 17.43639888205313, 44.35414519872813);
+    const vec3 c4 = vec3(77.162935699427, -33.40235894210092, -81.80730925738993);
+    const vec3 c5 = vec3(-71.31942824499214, 32.62606426397723, 73.20951985803202);
+    const vec3 c6 = vec3(25.13112622477341, -12.24266895238567, -23.07032500287172);
+    return c0+t*(c1+t*(c2+t*(c3+t*(c4+t*(c5+t*c6)))));
+
+}`;
 function Shader(inputs, output, code) {
   this.inputs = inputs;
   this.outputs = output;
   const uniforms = {};
-  let prefix = '';
+  let uniformDeclarations = '';
   for (const i of inputs) {
     uniforms[i] = { value: buffers[i].texture };
-    prefix += `uniform sampler2D ${i};\n`;
+    uniformDeclarations += `uniform sampler2D ${i};\n`;
   }
   this.material = new THREE.ShaderMaterial({
     ...baseshader,
     uniforms,
-    fragmentShader: `${prefix}varying vec2 pos;\nvoid main() {\n${code}}`,
+    fragmentShader: `
+    #define W ${W}.0
+    #define H ${H}.0
+    ${inferno}
+    ${uniformDeclarations}
+    varying vec2 pos;
+    void main() {
+      vec4 o = vec4(0.0);
+      ${code}
+      gl_FragColor = o;
+    }`,
   });
   this.render = () => {
     quad.material = this.material;
@@ -80,28 +104,64 @@ const buffers = {
 };
 
 const shaders = {
-  tectonics: new Shader(
+  preserve_total_land: new Shader(
     ['height'],
     'height',
-    `// Keeps height average at 0.5.
-    gl_FragColor = texture2D(height, pos);
+    `
+    o = texture2D(height, pos);
     float avg = texture2DLodEXT(height, pos, 100.0).r;
-    gl_FragColor.r += 0.01 * (0.5 - avg);
+    if (abs(0.5-pos.x) < 0.2 && abs(0.5-pos.y) < 0.3)
+    o.r += 0.01 * (0.5 - avg);
     `
   ),
-  erosion: new Shader(
+  preserve_total_water: new Shader(
+    ['water'],
+    'water',
+    `
+    o = texture2D(water, pos);
+    float avg = texture2DLodEXT(water, pos, 100.0).r;
+    if (abs(0.5-pos.x) < 0.2 && abs(0.5-pos.y) < 0.3)
+    o.r += 0.01 * (0.8 - avg);
+    `
+  ),
+  water_flowing: new Shader(
+    ['height', 'water'],
+    'water',
+    `
+    float h = texture2D(height, pos).r;
+    float w = texture2D(water, pos).r;
+    float win = 0.0;
+    float wout = 0.0;
+    for (float dx = -1.0; dx <= 1.0; ++dx) {
+      for (float dy = -1.0; dy <= 1.0; ++dy) {
+        if (dx == 0.0 && dy == 0.0) continue;
+        float h2 = texture2D(height, pos + vec2(dx/W, dy/H)).r;
+        float w2 = texture2D(water, pos + vec2(dx/W, dy/H)).r;
+        wout += clamp(h+w-h2-w2, 0.0, w);
+        win += clamp(h2+w2-h-w, 0.0, w2);
+      }
+    }
+    o.r = max(0.0, w+0.1*win-0.1*wout);
+    o.g = win;
+    o.b = wout;
+    `
+  ),
+  water_erosion: new Shader(
     ['height', 'water'],
     'height',
     `
-    gl_FragColor = texture2D(height, pos);
+    o = texture2D(height, pos);
     `
   ),
   display: new Shader(
-    ['height', 'cloud'],
+    ['height', 'water', 'cloud'],
     'display',
     `
-    gl_FragColor = texture2DLodEXT(height, pos, 10.0).brga;
-    gl_FragColor.a = 1.0;
+    float h = texture2D(height, pos).r;
+    float w = texture2D(water, pos).g*10.0 - texture2D(water, pos).b*10.0;
+    //float w = texture2D(water, pos).r;
+    o.rgb = inferno(w);
+    o.a = 1.0;
     `
   ),
 };
