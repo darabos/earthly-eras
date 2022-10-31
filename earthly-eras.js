@@ -20,9 +20,9 @@ function buffer() {
 }
 const baseshader = {
   vertexShader: `
-    varying vec2 vUv;
+    varying vec2 pos;
     void main() {
-      vUv = uv;
+      pos = uv;
       gl_Position = vec4(position, 1.0);
     }
   `,
@@ -39,12 +39,24 @@ function Shader(inputs, output, code) {
   this.material = new THREE.ShaderMaterial({
     ...baseshader,
     uniforms,
-    fragmentShader: `${prefix}varying vec2 vUv;\nvoid main() {\n${code}}`,
+    fragmentShader: `${prefix}varying vec2 pos;\nvoid main() {\n${code}}`,
   });
   this.render = () => {
     quad.material = this.material;
-    renderer.setRenderTarget(buffers[output]);
-    renderer.render(scene, camera);
+    if (output === 'display') {
+      renderer.setRenderTarget(null);
+      renderer.render(scene, camera);
+    } else {
+      renderer.setRenderTarget(buffers.temporary);
+      renderer.render(scene, camera);
+      for (const sh in shaders) {
+        const us = shaders[sh].material.uniforms;
+        if (us[output]) {
+          us[output] = { value: buffers.temporary.texture };
+        }
+      }
+      [buffers.temporary, buffers[output]] = [buffers[output], buffers.temporary];
+    }
   };
 }
 const quad = new THREE.Mesh(new THREE.PlaneBufferGeometry(2, 2, 1, 1));
@@ -63,22 +75,33 @@ const buffers = {
   wind: buffer(), // Direction vector.
   sunlight: buffer(),
   vegetation: buffer(),
+  temporary: buffer(),
   display: null,
 };
 
 const shaders = {
+  tectonics: new Shader(
+    ['height'],
+    'height',
+    `// Keeps height average at 0.5.
+    gl_FragColor = texture2D(height, pos);
+    float avg = texture2DLodEXT(height, pos, 100.0).r;
+    gl_FragColor.r += 0.01 * (0.5 - avg);
+    `
+  ),
   erosion: new Shader(
     ['height', 'water'],
     'height',
     `
-    gl_FragColor = vec4(0.0, vUv.x, vUv.y, 1.0);
+    gl_FragColor = texture2D(height, pos);
     `
   ),
   display: new Shader(
     ['height', 'cloud'],
     'display',
     `
-    gl_FragColor = texture2DLodEXT(height, vUv, 10.0).brga;
+    gl_FragColor = texture2DLodEXT(height, pos, 10.0).brga;
+    gl_FragColor.a = 1.0;
     `
   ),
 };
