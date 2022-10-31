@@ -10,33 +10,50 @@ resize();
 document.body.appendChild(renderer.domElement);
 window.addEventListener('resize', resize());
 const scene = new THREE.Scene();
-
-const material = new THREE.ShaderMaterial({
-  vertexShader: `
-    varying vec2 vUv;
-    
-    void main() {
-        vUv = uv;
-        gl_Position = vec4( position, 1.0 );    
-    }
-  `,
-  fragmentShader: `
-    varying vec2 vUv;
-     
-    void main() {
-        gl_FragColor = vec4( 0.0, vUv.x, vUv.y, 1.0 );
-    }
-  `,
-});
 const W = 512;
 const H = 512;
 const height = new THREE.WebGLRenderTarget(W, H);
 const water = new THREE.WebGLRenderTarget(W, H);
 
-const quad = new THREE.Mesh(new THREE.PlaneBufferGeometry(2, 2, 1, 1), material);
+const baseshader = {
+  vertexShader: `
+    varying vec2 vUv;
+    void main() {
+        vUv = uv;
+        gl_Position = vec4( position, 1.0 );    
+    }
+  `,
+};
+const erosion = new THREE.ShaderMaterial({
+  ...baseshader,
+  fragmentShader: `
+    varying vec2 vUv;
+    void main() {
+        gl_FragColor = vec4( 0.0, vUv.x, vUv.y, 1.0 );
+    }
+  `,
+});
+const display = new THREE.ShaderMaterial({
+  ...baseshader,
+  uniforms: { height: { value: height.texture } },
+  fragmentShader: `
+    varying vec2 vUv;
+    uniform sampler2D height;
+    void main() {
+        gl_FragColor = texture2D(height, vUv).brga;
+    }
+  `,
+});
+
+const quad = new THREE.Mesh(new THREE.PlaneBufferGeometry(2, 2, 1, 1));
 scene.add(quad);
 function animate() {
   requestAnimationFrame(animate);
+  quad.material = erosion;
+  renderer.setRenderTarget(height);
+  renderer.render(scene, camera);
+  quad.material = display;
+  renderer.setRenderTarget(null);
   renderer.render(scene, camera);
 }
 animate();
