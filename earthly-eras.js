@@ -12,48 +12,74 @@ window.addEventListener('resize', resize());
 const scene = new THREE.Scene();
 const W = 512;
 const H = 512;
-const height = new THREE.WebGLRenderTarget(W, H);
-const water = new THREE.WebGLRenderTarget(W, H);
-
+function buffer() {
+  const b = new THREE.WebGLRenderTarget(W, H);
+  b.texture.generateMipmaps = true;
+  b.texture.minFilter = THREE.LinearMipmapLinearFilter;
+  return b;
+}
 const baseshader = {
   vertexShader: `
     varying vec2 vUv;
     void main() {
-        vUv = uv;
-        gl_Position = vec4( position, 1.0 );    
+      vUv = uv;
+      gl_Position = vec4(position, 1.0);
     }
   `,
 };
-const erosion = new THREE.ShaderMaterial({
-  ...baseshader,
-  fragmentShader: `
-    varying vec2 vUv;
-    void main() {
-        gl_FragColor = vec4( 0.0, vUv.x, vUv.y, 1.0 );
-    }
-  `,
-});
-const display = new THREE.ShaderMaterial({
-  ...baseshader,
-  uniforms: { height: { value: height.texture } },
-  fragmentShader: `
-    varying vec2 vUv;
-    uniform sampler2D height;
-    void main() {
-        gl_FragColor = texture2D(height, vUv).brga;
-    }
-  `,
-});
-
+function Shader(inputs, output, code) {
+  this.inputs = inputs;
+  this.outputs = output;
+  const uniforms = {};
+  let prefix = '';
+  for (const i of inputs) {
+    uniforms[i] = { value: buffers[i].texture };
+    prefix += `uniform sampler2D ${i};\n`;
+  }
+  this.material = new THREE.ShaderMaterial({
+    ...baseshader,
+    uniforms,
+    fragmentShader: `${prefix}varying vec2 vUv;\nvoid main() {\n${code}}`,
+  });
+  this.render = () => {
+    quad.material = this.material;
+    renderer.setRenderTarget(buffers[output]);
+    renderer.render(scene, camera);
+  };
+}
 const quad = new THREE.Mesh(new THREE.PlaneBufferGeometry(2, 2, 1, 1));
 scene.add(quad);
 function animate() {
   requestAnimationFrame(animate);
-  quad.material = erosion;
-  renderer.setRenderTarget(height);
-  renderer.render(scene, camera);
-  quad.material = display;
-  renderer.setRenderTarget(null);
-  renderer.render(scene, camera);
+  for (const k in shaders) {
+    shaders[k].render();
+  }
 }
+
+const buffers = {
+  height: buffer(), // Terrain height.
+  cloud: buffer(), // Air water content, cloud density.
+  water: buffer(), // Surface water.
+  wind: buffer(), // Direction vector.
+  sunlight: buffer(),
+  vegetation: buffer(),
+  display: null,
+};
+
+const shaders = {
+  erosion: new Shader(
+    ['height', 'water'],
+    'height',
+    `
+    gl_FragColor = vec4(0.0, vUv.x, vUv.y, 1.0);
+    `
+  ),
+  display: new Shader(
+    ['height', 'cloud'],
+    'display',
+    `
+    gl_FragColor = texture2DLodEXT(height, vUv, 10.0).brga;
+    `
+  ),
+};
 animate();
