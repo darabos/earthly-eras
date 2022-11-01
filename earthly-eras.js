@@ -153,8 +153,9 @@ const shaders = {
     float w = o.r;
     float win = 0.0;
     float wout = 0.0;
-    for (float dx = -1.0; dx <= 1.0; ++dx) {
-      for (float dy = -1.0; dy <= 1.0; ++dy) {
+    float SIZE = 3.0;
+    for (float dx = -SIZE; dx <= SIZE; ++dx) {
+      for (float dy = -SIZE; dy <= SIZE; ++dy) {
         if (dx == 0.0 && dy == 0.0) continue;
         float h2 = texture2D(height, pos + vec2(dx/W, dy/H)).r;
         float w2 = texture2D(water, pos + vec2(dx/W, dy/H)).r;
@@ -162,7 +163,8 @@ const shaders = {
         win += clamp(h2+w2-h-w, 0.0, w2);
       }
     }
-    o.r = clamp(w+0.1*win-0.1*wout, 0.0, 1.0);
+    float scale = 1.0 / (SIZE*2.0 + 1.0) / (SIZE*2.0 + 1.0);
+    o.r = clamp(w + scale*win - scale*wout, 0.0, 1.0);
     o.g = win;
     o.b = wout;
     `
