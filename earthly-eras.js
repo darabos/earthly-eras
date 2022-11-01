@@ -10,10 +10,10 @@ resize();
 document.body.appendChild(renderer.domElement);
 window.addEventListener('resize', resize());
 const scene = new THREE.Scene();
-const W = 32;
+const W = 64;
 const H = W;
 function buffer() {
-  const b = new THREE.WebGLRenderTarget(W, H);
+  const b = new THREE.WebGLRenderTarget(W, H, { type: THREE.FloatType });
   b.texture.generateMipmaps = true;
   b.texture.minFilter = THREE.LinearMipmapLinearFilter;
   b.texture.magFilter = THREE.NearestFilter;
@@ -162,9 +162,7 @@ const shaders = {
         win += clamp(h2+w2-h-w, 0.0, w2);
       }
     }
-    // Add random "ripples" to counteract precision issues.
-    float rnd = 0.01 - 0.02 * frandom(vec3(pos.xy, time)).x;
-    o.r = max(0.0, w+0.05*win-0.05*wout+rnd);
+    o.r = clamp(w+0.1*win-0.1*wout, 0.0, 1.0);
     o.g = win;
     o.b = wout;
     `
