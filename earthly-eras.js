@@ -10,7 +10,7 @@ resize();
 document.body.appendChild(renderer.domElement);
 window.addEventListener('resize', resize());
 const scene = new THREE.Scene();
-const W = 64;
+const W = 128;
 const H = W;
 function buffer() {
   const b = new THREE.WebGLRenderTarget(W, H, { type: THREE.FloatType });
@@ -105,11 +105,39 @@ function Shader(inputs, output, code) {
 }
 const quad = new THREE.Mesh(new THREE.PlaneBufferGeometry(2, 2, 1, 1));
 scene.add(quad);
+const options = {
+  speedup: 1.0,
+  debug: 'none',
+};
 function animate(time) {
   requestAnimationFrame(animate);
-  for (const k in shaders) {
-    shaders[k].render(time);
+  for (let i = 0; i < options.speedup; ++i) {
+    for (const k in shaders) {
+      if (k === 'display') continue;
+      shaders[k].render(time);
+    }
   }
+  shaders.display.render(time);
+}
+function makeUI() {
+  const gui = new lil.GUI();
+  gui.add(options, 'speedup').min(0).max(10);
+  let origdisplay;
+  gui
+    .add(options, 'debug', ['none', ...Object.keys(buffers).flatMap(b => [b, `${b}.r`, `${b}.g`, `${b}.b`, `${b}.a`])])
+    .onChange(v => {
+      if (!origdisplay) origdisplay = shaders.display;
+      if (v === 'none') {
+        shaders.display = origdisplay;
+        return;
+      }
+      const [buf, ch] = v.split('.');
+      shaders.display = new Shader(
+        [buf],
+        'display',
+        `o = texture2D(${buf}, pos);` + (ch ? `o.rgb = inferno(o.${ch}); o.a = 1.0;` : '')
+      );
+    });
 }
 
 const buffers = {
@@ -131,7 +159,7 @@ const shaders = {
     o = texture2D(height, pos);
     float avg = texture2DLodEXT(height, pos, 100.0).r;
     if (abs(0.5-pos.x) < 0.2 && abs(0.5-pos.y) < 0.3)
-    o.r += 0.01 * (0.5 - avg);
+    o.r += 0.01 * pos.x * (0.25 - avg);
     `
   ),
   preserve_total_water: new Shader(
@@ -140,33 +168,29 @@ const shaders = {
     `
     o = texture2D(water, pos);
     float avg = texture2DLodEXT(water, pos, 100.0).r;
-    if (abs(0.5-pos.x) < 0.2 && abs(0.5-pos.y) < 0.3)
-    o.r += 0.01 * (0.8 - avg);
+    o.r += 0.01 * (0.5 - avg);
     `
   ),
   water_flowing: new Shader(
     ['height', 'water'],
     'water',
     `
-    float h = texture2D(height, pos).r;
-    o = texture2D(water, pos);
-    float w = o.r;
-    float win = 0.0;
-    float wout = 0.0;
+    vec4 h = texture2D(height, pos);
+    vec4 w = texture2D(water, pos);
+    vec4 win = vec4(0.0);
+    vec4 wout = vec4(0.0);
     float SIZE = 3.0;
     for (float dx = -SIZE; dx <= SIZE; ++dx) {
       for (float dy = -SIZE; dy <= SIZE; ++dy) {
         if (dx == 0.0 && dy == 0.0) continue;
-        float h2 = texture2D(height, pos + vec2(dx/W, dy/H)).r;
-        float w2 = texture2D(water, pos + vec2(dx/W, dy/H)).r;
-        wout += clamp(h+w-h2-w2, 0.0, w);
-        win += clamp(h2+w2-h-w, 0.0, w2);
+        vec4 h2 = texture2D(height, pos + vec2(dx/W, dy/H));
+        vec4 w2 = texture2D(water, pos + vec2(dx/W, dy/H));
+        wout += clamp(h+w-h2-w2, 0.0, w.r);
+        win += clamp(h2+w2-h-w, 0.0, w2.r);
       }
     }
     float scale = 1.0 / (SIZE*2.0 + 1.0) / (SIZE*2.0 + 1.0);
-    o.r = clamp(w + scale*win - scale*wout, 0.0, 1.0);
-    o.g = win;
-    o.b = wout;
+    o = clamp(w + scale*win - scale*wout, 0.0, 1.0);
     `
   ),
   water_erosion: new Shader(
@@ -182,10 +206,10 @@ const shaders = {
     `
     float h = texture2D(height, pos).r;
     float w = texture2D(water, pos).r;
-    o.g = h;
-    o.b = w;
+    o.rgb = inferno(w + h);
     o.a = 1.0;
     `
   ),
 };
 animate(0);
+makeUI();
