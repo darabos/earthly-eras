@@ -58,6 +58,16 @@ vec3 frandom(vec3 v) {
   return vec3(random(uvec3(v*W))) * (1.0/float(0xffffffffu));
 }
 `;
+const normal = `
+// https://iquilezles.org/articles/normalsSDF/
+vec3 normal(const sampler2D t, const int ch, const vec2 p) {
+  const vec2 h = vec2(1.0/W, 0);
+  return normalize(vec3(
+    texture2D(t, p-h.xy)[ch] - texture2D(t, p+h.xy)[ch],
+    2.0*h.x,
+    texture2D(t, p-h.yx)[ch] - texture2D(t, p+h.yx)[ch]));
+}
+`;
 function Shader(inputs, output, code) {
   this.inputs = inputs;
   this.outputs = output;
@@ -75,6 +85,7 @@ function Shader(inputs, output, code) {
     #define H ${H}.0
     ${inferno}
     ${random}
+    ${normal}
     ${uniformDeclarations}
     varying vec2 pos;
     uniform float time;
@@ -143,7 +154,7 @@ function makeUI() {
 const buffers = {
   height: buffer(), // Terrain height.
   cloud: buffer(), // Air water content, cloud density.
-  water: buffer(), // Surface water.
+  water: buffer(), // Surface water, carried dirt, picked up dirt.
   wind: buffer(), // Direction vector.
   sunlight: buffer(),
   vegetation: buffer(),
@@ -158,8 +169,9 @@ const shaders = {
     `
     o = texture2D(height, pos);
     float avg = texture2DLodEXT(height, pos, 100.0).r;
+    if (time < 10000.) avg *= frandom(vec3(pos, time)).r;
     if (abs(0.5-pos.x) < 0.2 && abs(0.5-pos.y) < 0.3)
-    o.r += 0.01 * pos.x * (0.25 - avg);
+    o.r += 0.01 * pos.x * (0.2 - avg);
     `
   ),
   preserve_total_water: new Shader(
@@ -175,6 +187,7 @@ const shaders = {
     ['height', 'water'],
     'water',
     `
+    // Flowing.
     vec4 h = texture2D(height, pos);
     vec4 w = texture2D(water, pos);
     vec4 win = vec4(0.0);
@@ -191,6 +204,10 @@ const shaders = {
     }
     float scale = 1.0 / (SIZE*2.0 + 1.0) / (SIZE*2.0 + 1.0);
     o = clamp(w + scale*win - scale*wout, 0.0, 1.0);
+    // Erosion.
+    float capacity = 0.01 * (win.r + wout.r);
+    o.b = capacity - o.g;
+    o.g += o.b;
     `
   ),
   water_erosion: new Shader(
@@ -198,16 +215,31 @@ const shaders = {
     'height',
     `
     o = texture2D(height, pos);
+    o.r += texture2D(water, pos).b;
+    `
+  ),
+  sunlight: new Shader(
+    ['height'],
+    'sunlight',
+    `
+    //vec3 sun = vec3(cos(0.001*time), 1, 0.2*sin(0.001*time));
+    vec3 sun = vec3(1, 1, 1);
+    vec3 nor = normal(height, 0, pos);
+    o.r = 0.5+0.5*dot(nor, normalize(sun));
     `
   ),
   display: new Shader(
-    ['height', 'water', 'cloud'],
+    ['height', 'water', 'cloud', 'sunlight'],
     'display',
     `
     float h = texture2D(height, pos).r;
     float w = texture2D(water, pos).r;
-    o.rgb = inferno(w + h);
-    o.a = 1.0;
+    float s = texture2D(sunlight, pos).r;
+    vec3 c = vec3(s);
+    // gain
+    c = c*3.0/(2.5+c);
+    c = pow(c, vec3(0.4545));
+    o = vec4(c, 1.0);
     `
   ),
 };
