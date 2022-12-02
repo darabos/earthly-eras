@@ -236,6 +236,8 @@ const shaders = {
     float w = texture2D(water, pos).r;
     float s = texture2D(sunlight, pos).r;
     vec3 c = vec3(s);
+    vec3 sea = vec3(0.01, 0.1, 0.3);
+    c *= sea/(sea+w);
     // gain
     c = c*3.0/(2.5+c);
     c = pow(c, vec3(0.4545));
