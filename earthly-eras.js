@@ -162,6 +162,7 @@ const buffers = {
   display: null,
 };
 
+const soil = 0.01; // This much water is present as groundwater.
 const shaders = {
   preserve_total_land: new Shader(
     ['height'],
@@ -172,6 +173,14 @@ const shaders = {
     if (time < 10000.) avg *= frandom(vec3(pos, time)).r;
     if (abs(0.5-pos.x) < 0.2 && abs(0.5-pos.y) < 0.3)
     o.r += 0.01 * pos.x * (0.2 - avg);
+    `
+  ),
+  evaporate: new Shader(
+    ['water'],
+    'water',
+    `
+    o = texture2D(water, pos);
+    if (o.r > ${soil}) o.r = o.r - 0.01*${soil};
     `
   ),
   preserve_total_water: new Shader(
@@ -228,18 +237,32 @@ const shaders = {
     o.r = 0.5+0.5*dot(nor, normalize(sun));
     `
   ),
+  vegetation: new Shader(
+    ['height', 'water', 'vegetation'],
+    'vegetation',
+    `
+    float w = texture2D(water, pos).r;
+    o = texture2D(vegetation, pos);
+    float stable;
+    if (w < ${soil}) stable = pow(w / ${soil}, 0.2);
+    o.r = o.r*0.999 + 0.001*stable;
+    `
+  ),
   display: new Shader(
-    ['height', 'water', 'cloud', 'sunlight'],
+    ['height', 'water', 'cloud', 'sunlight', 'vegetation'],
     'display',
     `
     float h = texture2D(height, pos).r;
-    float w = texture2D(water, pos).r;
+    // Surface water.
+    float w = max(0., texture2D(water, pos).r - ${soil});
     float s = texture2D(sunlight, pos).r;
+    float v = texture2D(vegetation, pos).r;
     vec3 c = vec3(s);
+    c.rb *= 1. - v;
     vec3 sea = vec3(0.01, 0.1, 0.3);
-    c *= sea/(sea+w);
+    c *= sea / (sea + w);
     // gain
-    c = c*3.0/(2.5+c);
+    c = c * 3. / (2.5 + c);
     c = pow(c, vec3(0.4545));
     o = vec4(c, 1.0);
     `
