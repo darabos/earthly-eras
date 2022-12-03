@@ -117,22 +117,27 @@ function Shader(inputs, output, code) {
 const quad = new THREE.Mesh(new THREE.PlaneBufferGeometry(2, 2, 1, 1));
 scene.add(quad);
 const options = {
-  speedup: 1.0,
+  speedup: 0.0,
   debug: 'none',
 };
-function animate(time) {
+let time = 0;
+let tostep = 0;
+function animate() {
   requestAnimationFrame(animate);
-  for (let i = 0; i < options.speedup; ++i) {
+  const t = Math.pow(10, options.speedup);
+  time += t;
+  for (tostep += t; tostep >= 1; --tostep) {
     for (const k in shaders) {
-      if (k === 'display') continue;
+      if ('display sunlight'.includes(k)) continue;
       shaders[k].render(time);
     }
   }
+  for (let s = 0; s < 10; ++s) shaders.sunlight.render(time + Math.random() * t);
   shaders.display.render(time);
 }
 function makeUI() {
   const gui = new lil.GUI();
-  gui.add(options, 'speedup').min(0).max(10);
+  gui.add(options, 'speedup').min(-3).max(2);
   let origdisplay;
   gui
     .add(options, 'debug', ['none', ...Object.keys(buffers).flatMap(b => [b, `${b}.r`, `${b}.g`, `${b}.b`, `${b}.a`])])
@@ -170,7 +175,7 @@ const shaders = {
     `
     o = texture2D(height, pos);
     float avg = texture2DLodEXT(height, pos, 100.0).r;
-    if (time < 10000.) avg *= frandom(vec3(pos, time)).r;
+    if (time < 1000.) avg *= frandom(vec3(pos, time)).r;
     if (abs(0.5-pos.x) < 0.2 && abs(0.5-pos.y) < 0.3)
     o.r += 0.01 * pos.x * (0.2 - avg);
     `
@@ -228,13 +233,22 @@ const shaders = {
     `
   ),
   sunlight: new Shader(
-    ['height'],
+    ['height', 'sunlight'],
     'sunlight',
     `
-    //vec3 sun = vec3(cos(0.001*time), 1, 0.2*sin(0.001*time));
-    vec3 sun = vec3(1, 1, 1);
+    vec3 s = texture2D(sunlight, pos).rgb;
+    float t = 20. * time;
+    vec3 sun = vec3(cos(t), 0.1+0.8*sin(t), 2.+0.2*sin(t));
+    //vec3 sun = vec3(1, 1, 1);
     vec3 nor = normal(height, 0, pos);
-    o.r = 0.5+0.5*dot(nor, normalize(sun));
+    float direct = clamp(dot(nor, normalize(sun)), 0., 1.);
+    vec3 c = vec3(0.1*sun.y + direct);
+    if (sun.y < 0.) {
+      float n = 0.05*dot(nor, normalize(vec3(0,1,.1)));
+      vec3 night = vec3(0.6*n, 0.6*n, n);
+      c = mix(night, c, exp(vec3(5.,10.,10.)*sun.y));
+    }
+    o = vec4(mix(s, c, 0.002), 1.);
     `
   ),
   vegetation: new Shader(
@@ -255,10 +269,11 @@ const shaders = {
     float h = texture2D(height, pos).r;
     // Surface water.
     float w = max(0., texture2D(water, pos).r - ${soil});
-    float s = texture2D(sunlight, pos).r;
+    vec3 s = texture2D(sunlight, pos).rgb;
     float v = texture2D(vegetation, pos).r;
-    vec3 c = vec3(s);
+    vec3 c = vec3(1.);
     c.rb *= 1. - v;
+    c *= s;
     vec3 sea = vec3(0.01, 0.1, 0.3);
     c *= sea / (sea + w);
     // gain
