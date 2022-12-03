@@ -89,6 +89,7 @@ function Shader(inputs, output, code) {
     ${uniformDeclarations}
     varying vec2 pos;
     uniform float time;
+    uniform float speedup;
     void main() {
       vec4 o = vec4(0.0);
       ${code}
@@ -98,22 +99,29 @@ function Shader(inputs, output, code) {
   this.render = time => {
     quad.material = this.material;
     this.material.uniforms.time = { value: time };
+    this.material.uniforms.speedup = { value: options.speedup };
     if (output === 'display') {
       renderer.setRenderTarget(null);
       renderer.render(scene, camera);
     } else {
       renderer.setRenderTarget(buffers.temporary);
       renderer.render(scene, camera);
-      for (const sh in shaders) {
-        const us = shaders[sh].material.uniforms;
-        if (us[output]) {
-          us[output] = { value: buffers.temporary.texture };
-        }
-      }
+      swapAll(shaders, output, buffers.temporary.texture);
+      swapAll(shaders_paused, output, buffers.temporary.texture);
       [buffers.temporary, buffers[output]] = [buffers[output], buffers.temporary];
     }
   };
 }
+
+function swapAll(shaders, name, texture) {
+  for (const sh in shaders) {
+    const us = shaders[sh].material.uniforms;
+    if (us[name]) {
+      us[name] = { value: texture };
+    }
+  }
+}
+
 const quad = new THREE.Mesh(new THREE.PlaneBufferGeometry(2, 2, 1, 1));
 scene.add(quad);
 const options = {
@@ -126,18 +134,24 @@ function animate() {
   requestAnimationFrame(animate);
   const t = Math.pow(10, options.speedup);
   time += t;
-  for (tostep += t; tostep >= 1; --tostep) {
-    for (const k in shaders) {
-      if ('display sunlight'.includes(k)) continue;
-      shaders[k].render(time);
+  if (t > 0.1) {
+    for (tostep += t; tostep >= 1; --tostep) {
+      for (const k in shaders) {
+        if (k === 'display') continue;
+        shaders[k].render(time);
+      }
+    }
+    shaders.sunlight.render(time);
+    shaders.display.render(time);
+  } else {
+    for (const k in shaders_paused) {
+      shaders_paused[k].render(time);
     }
   }
-  for (let s = 0; s < 10; ++s) shaders.sunlight.render(time + Math.random() * t);
-  shaders.display.render(time);
 }
 function makeUI() {
   const gui = new lil.GUI();
-  gui.add(options, 'speedup').min(-3).max(2);
+  gui.add(options, 'speedup').min(-4).max(2);
   let origdisplay;
   gui
     .add(options, 'debug', ['none', ...Object.keys(buffers).flatMap(b => [b, `${b}.r`, `${b}.g`, `${b}.b`, `${b}.a`])])
@@ -236,19 +250,10 @@ const shaders = {
     ['height', 'sunlight'],
     'sunlight',
     `
-    vec3 s = texture2D(sunlight, pos).rgb;
-    float t = 20. * time;
-    vec3 sun = vec3(cos(t), 0.1+0.8*sin(t), 2.+0.2*sin(t));
-    //vec3 sun = vec3(1, 1, 1);
+    vec3 sun = vec3(1, 2, 1);
     vec3 nor = normal(height, 0, pos);
     float direct = clamp(dot(nor, normalize(sun)), 0., 1.);
-    vec3 c = vec3(0.1*sun.y + direct);
-    if (sun.y < 0.) {
-      float n = 0.05*dot(nor, normalize(vec3(0,1,.1)));
-      vec3 night = vec3(0.6*n, 0.6*n, n);
-      c = mix(night, c, exp(vec3(5.,10.,10.)*sun.y));
-    }
-    o = vec4(mix(s, c, 0.002), 1.);
+    o = vec4(0.5 + direct);
     `
   ),
   vegetation: new Shader(
@@ -282,6 +287,33 @@ const shaders = {
     o = vec4(c, 1.0);
     `
   ),
+};
+const shaders_paused = {
+  sunlight: new Shader(
+    ['height'],
+    'sunlight',
+    `
+    // Day-cycle model.
+    float t = 20. * time;
+    vec3 sun = vec3(cos(t), 0.1+0.8*sin(t), 2.+0.2*sin(t));
+    vec3 nor = normal(height, 0, pos);
+    float direct = clamp(dot(nor, normalize(sun)), 0., 1.);
+    vec3 c = vec3(0.1*sun.y + direct);
+    if (sun.y < 0.) {
+      float n = 0.05*dot(nor, normalize(vec3(0,1,.1)));
+      vec3 night = vec3(0.6*n, 0.6*n, n);
+      c = mix(night, c, exp(vec3(5.,10.,10.)*sun.y));
+    }
+
+    // Simple model.
+    sun = vec3(1, 2, 1);
+    direct = clamp(dot(nor, normalize(sun)), 0., 1.);
+    vec3 s = vec3(0.5 + direct);
+
+    o = vec4(mix(s, c, clamp(-1.-speedup, 0., 1.)), 1.);
+    `
+  ),
+  display: shaders.display,
 };
 animate(0);
 makeUI();
