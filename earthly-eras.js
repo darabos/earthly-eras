@@ -127,7 +127,24 @@ scene.add(quad);
 const options = {
   speedup: 0.0,
   debug: 'none',
+  record() {
+    recorder.start();
+  },
+  save() {
+    recorder.requestData();
+  },
 };
+
+function saveBlob(blob, filename) {
+  url = URL.createObjectURL(blob);
+  hiddenLink.href = url;
+  hiddenLink.download = filename;
+  hiddenLink.click();
+  URL.revokeObjectURL(url);
+}
+const recorder = new MediaRecorder(renderer.domElement.captureStream());
+recorder.ondataavailable = e => saveBlob(e.data, 'video.webm');
+
 let time = 0;
 let tostep = 0;
 function animate() {
@@ -168,6 +185,8 @@ function makeUI() {
       );
       shaders_paused.display = shaders.display;
     });
+  gui.add(options, 'record');
+  gui.add(options, 'save');
 }
 
 const buffers = {
