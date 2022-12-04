@@ -137,11 +137,10 @@ function animate() {
   if (t > 0.1) {
     for (tostep += t; tostep >= 1; --tostep) {
       for (const k in shaders) {
-        if (k === 'display') continue;
+        if (k === 'display' || k.startsWith('x')) continue;
         shaders[k].render(time);
       }
     }
-    shaders.sunlight.render(time);
     shaders.display.render(time);
   } else {
     for (const k in shaders_paused) {
@@ -173,7 +172,7 @@ function makeUI() {
 const buffers = {
   height: buffer(), // Terrain height.
   cloud: buffer(), // Air water content, cloud density.
-  water: buffer(), // Surface water, carried dirt, picked up dirt.
+  water: buffer(), // Surface water, carried dirt, temp.
   wind: buffer(), // Direction vector.
   sunlight: buffer(),
   vegetation: buffer(),
@@ -199,7 +198,21 @@ const shaders = {
     'water',
     `
     o = texture2D(water, pos);
-    if (o.r > ${soil}) o.r = o.r - 0.01*${soil};
+    o.b = clamp(o.r - ${soil}, 0., 0.01 * ${soil});
+    o.r -= o.b;
+    `
+  ),
+  xclouds: new Shader(
+    ['water', 'cloud', 'height'],
+    'cloud',
+    `
+    float h = texture2D(height, pos).r;
+    vec4 w = texture2D(water, pos);
+    o = texture2D(cloud, pos + vec2(0.01));
+    o.r += w.b;
+    float temperature = 1. - h;
+    float capacity = 
+    o.g = smoothstep(0., 1., o.r - 
     `
   ),
   preserve_total_water: new Shader(
@@ -242,8 +255,10 @@ const shaders = {
     ['height', 'water'],
     'height',
     `
+    vec4 w = texture2D(water, pos);
     o = texture2D(height, pos);
-    o.r += texture2D(water, pos).b;
+    o.r += w.b;
+    o.b = o.r + max(0., w.r - ${soil}); // Ground + water height.
     `
   ),
   sunlight: new Shader(
@@ -272,16 +287,29 @@ const shaders = {
     'display',
     `
     float h = texture2D(height, pos).r;
+    float cl = texture2D(cloud, pos).r;
     // Surface water.
     float w = max(0., texture2D(water, pos).r - ${soil});
     vec3 s = texture2D(sunlight, pos).rgb;
     float v = texture2D(vegetation, pos).r;
+
     vec3 c = vec3(1.);
     c.rb *= 1. - v;
     c *= s;
+
+    // Underwater.
     vec3 sea = vec3(0.01, 0.1, 0.3);
     c *= sea / (sea + w);
-    // gain
+
+    // Specular.
+    vec3 sun = normalize(vec3(1, 2, 1));
+    vec3 nor = normal(height, 2, pos);
+    c += min(w, 0.01)*100.*pow(clamp(dot(nor, sun), 0., 1.), 16.);
+
+    // Clouds.
+    c += vec3(cl);
+
+    // Gain.
     c = c * 3. / (2.5 + c);
     c = pow(c, vec3(0.4545));
     o = vec4(c, 1.0);
