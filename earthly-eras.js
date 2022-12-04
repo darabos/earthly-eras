@@ -164,14 +164,15 @@ function makeUI() {
       shaders.display = new Shader(
         [buf],
         'display',
-        `o = texture2D(${buf}, pos);` + (ch ? `o.rgb = inferno(o.${ch}); o.a = 1.0;` : '')
+        `o = texture2D(${buf}, pos); o.a = 1.0;` + (ch ? `o.rgb = inferno(clamp(o.${ch}, 0., 1.));` : '')
       );
+      shaders_paused.display = shaders.display;
     });
 }
 
 const buffers = {
   height: buffer(), // Terrain height.
-  cloud: buffer(), // Air water content, cloud density.
+  cloud: buffer(), // Air water content, cloud density, rainfall.
   water: buffer(), // Surface water, carried dirt, temp.
   wind: buffer(), // Direction vector.
   sunlight: buffer(),
@@ -198,21 +199,38 @@ const shaders = {
     'water',
     `
     o = texture2D(water, pos);
+    // Evaporated amount.
     o.b = clamp(o.r - ${soil}, 0., 0.01 * ${soil});
     o.r -= o.b;
     `
   ),
-  xclouds: new Shader(
+  clouds: new Shader(
     ['water', 'cloud', 'height'],
     'cloud',
     `
-    float h = texture2D(height, pos).r;
     vec4 w = texture2D(water, pos);
-    o = texture2D(cloud, pos + vec2(0.01));
+    float h = texture2D(height, pos).r + w.r;
+    vec2 wind = vec2(-0.01, 0.01);
+    o = texture2D(cloud, pos + wind);
     o.r += w.b;
-    float temperature = 1. - h;
-    float capacity = 
-    o.g = smoothstep(0., 1., o.r - 
+    float temperature = clamp(1. - h, 0., 0.5);
+    // Linear guesses.
+    float max_humidity = temperature;
+    float max_cloud = temperature;
+
+    // Rainfall.
+    o.b = max(0., o.r - max_humidity - max_cloud);
+    o.r -= o.b;
+    o.g = max(0., o.r - max_humidity);
+    `
+  ),
+  rain: new Shader(
+    ['water', 'cloud'],
+    'water',
+    `
+    vec4 cl = texture2D(cloud, pos);
+    o = texture2D(water, pos);
+    o.r += cl.b;
     `
   ),
   preserve_total_water: new Shader(
@@ -287,7 +305,7 @@ const shaders = {
     'display',
     `
     float h = texture2D(height, pos).r;
-    float cl = texture2D(cloud, pos).r;
+    float cl = texture2D(cloud, pos).g;
     // Surface water.
     float w = max(0., texture2D(water, pos).r - ${soil});
     vec3 s = texture2D(sunlight, pos).rgb;
@@ -302,9 +320,11 @@ const shaders = {
     c *= sea / (sea + w);
 
     // Specular.
+  #if 0
     vec3 sun = normalize(vec3(1, 2, 1));
     vec3 nor = normal(height, 2, pos);
     c += min(w, 0.01)*100.*pow(clamp(dot(nor, sun), 0., 1.), 16.);
+  #endif
 
     // Clouds.
     c += vec3(cl);
