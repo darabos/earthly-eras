@@ -39,7 +39,6 @@ vec3 inferno(float t) {
     const vec3 c5 = vec3(-71.31942824499214, 32.62606426397723, 73.20951985803202);
     const vec3 c6 = vec3(25.13112622477341, -12.24266895238567, -23.07032500287172);
     return c0+t*(c1+t*(c2+t*(c3+t*(c4+t*(c5+t*c6)))));
-
 }`;
 const noise = `
 // Simplex noise from https://www.shadertoy.com/view/Msf3WH.
@@ -71,13 +70,12 @@ vec3 normal(const sampler2D t, const int ch, const vec2 p) {
     texture2D(t, p-h.yx)[ch] - texture2D(t, p+h.yx)[ch]));
 }
 `;
-function Shader(inputs, output, code) {
+function Shader(inputs, output, code, extraHeader) {
   this.inputs = inputs;
   this.outputs = output;
   const uniforms = {};
   let uniformDeclarations = '';
   for (const i of inputs) {
-    uniforms[i] = { value: buffers[i].texture };
     uniformDeclarations += `uniform sampler2D ${i};\n`;
   }
   for (const o of shaderOptions) {
@@ -96,6 +94,7 @@ function Shader(inputs, output, code) {
     varying vec2 pos;
     uniform float time;
     uniform float speedup;
+    ${extraHeader || ''}
     void main() {
       vec4 o = vec4(0.0);
       ${code}
@@ -104,6 +103,9 @@ function Shader(inputs, output, code) {
   });
   this.render = time => {
     quad.material = this.material;
+    for (const i of inputs) {
+      this.material.uniforms[i] = { value: buffers[i].texture };
+    }
     this.material.uniforms.time = { value: time };
     this.material.uniforms.speedup = { value: options.speedup };
     for (const o of shaderOptions) {
@@ -135,15 +137,33 @@ const quad = new THREE.Mesh(new THREE.PlaneBufferGeometry(2, 2, 1, 1));
 scene.add(quad);
 const shaderOptions = ['cloud_opacity'];
 const options = {
-  speedup: 0.0,
-  debug: 'none',
+  speedup: 0,
+  layer: 'none',
+  brush_value: 1,
   record() {
     recorder.start();
   },
   save() {
     recorder.requestData();
+    recorder.stop();
+  },
+  debug_view() {
+    const v = options.layer;
+    if (!origdisplay) origdisplay = shaders.display;
+    if (v === 'none') {
+      shaders.display = origdisplay;
+    } else {
+      const [buf, ch] = v.split('.');
+      shaders.display = new Shader(
+        [buf],
+        'display',
+        `o = texture2D(${buf}, pos); o.a = 1.0;` + (ch ? `o.rgb = inferno(clamp(o.${ch}, 0., 1.));` : '')
+      );
+    }
+    shaders_paused.display = shaders.display;
   },
 };
+let origdisplay;
 
 function saveBlob(blob, filename) {
   url = URL.createObjectURL(blob);
@@ -154,6 +174,57 @@ function saveBlob(blob, filename) {
 }
 const recorder = new MediaRecorder(renderer.domElement.captureStream());
 recorder.ondataavailable = e => saveBlob(e.data, 'video.webm');
+
+let paint = false;
+renderer.domElement.addEventListener('pointerdown', () => {
+  paint = true;
+});
+renderer.domElement.addEventListener('pointerup', () => {
+  paint = false;
+});
+renderer.domElement.addEventListener('pointerleave', () => {
+  paint = false;
+});
+renderer.domElement.addEventListener('pointerenter', e => {
+  paint = !!e.buttons;
+});
+let paintShader = new Shader(
+  ['target'],
+  'target',
+  `
+  o = texture2D(target, pos);
+  if (length(pos - vec2(mouse_x, 1. - mouse_y)) < 5./W) {
+    if (channel < 0) o = vec4(value);
+    else o[channel] = value;
+  }
+  `,
+  `
+  uniform float mouse_x;
+  uniform float mouse_y;
+  uniform int channel;
+  uniform float value;
+  `
+);
+renderer.domElement.addEventListener('pointermove', e => {
+  if (paint) {
+    const rect = e.target.getClientRects()[0];
+    quad.material = paintShader.material;
+    quad.material.uniforms.mouse_x = { value: e.offsetX / rect.width };
+    quad.material.uniforms.mouse_y = { value: e.offsetY / rect.height };
+    quad.material.uniforms.value = { value: options.brush_value };
+    for (const o of shaderOptions) {
+      quad.material.uniforms[o] = { value: options[o] };
+    }
+    const [buf, ch] = options.layer.split('.');
+    quad.material.uniforms.channel = { value: 'rgba'.indexOf(ch) || -1 };
+    quad.material.uniforms.target = { value: buffers[buf].texture };
+    renderer.setRenderTarget(buffers.temporary);
+    renderer.render(scene, camera);
+    swapAll(shaders, buf, buffers.temporary.texture);
+    swapAll(shaders_paused, buf, buffers.temporary.texture);
+    [buffers.temporary, buffers[buf]] = [buffers[buf], buffers.temporary];
+  }
+});
 
 let time = 0;
 let tostep = 0;
@@ -178,25 +249,14 @@ function animate() {
 function makeUI() {
   const gui = new lil.GUI();
   gui.add(options, 'speedup').min(-4).max(2);
-  let origdisplay;
-  gui
-    .add(options, 'debug', ['none', ...Object.keys(buffers).flatMap(b => [b, `${b}.r`, `${b}.g`, `${b}.b`, `${b}.a`])])
-    .onChange(v => {
-      if (!origdisplay) origdisplay = shaders.display;
-      if (v === 'none') {
-        shaders.display = origdisplay;
-        return;
-      }
-      const [buf, ch] = v.split('.');
-      shaders.display = new Shader(
-        [buf],
-        'display',
-        `o = texture2D(${buf}, pos); o.a = 1.0;` + (ch ? `o.rgb = inferno(clamp(o.${ch}, 0., 1.));` : '')
-      );
-      shaders_paused.display = shaders.display;
-    });
-  gui.add(options, 'record');
-  gui.add(options, 'save');
+  gui.add(options, 'layer', [
+    'none',
+    ...Object.keys(buffers).flatMap(b => [b, `${b}.r`, `${b}.g`, `${b}.b`, `${b}.a`]),
+  ]);
+  gui.add(options, 'brush_value').name('brush value').min(-1).max(1);
+  gui.add(options, 'debug_view').name('view selected layer');
+  gui.add(options, 'record').name('record video');
+  gui.add(options, 'save').name('save video');
   for (const o of shaderOptions) {
     options[o] = 1;
     gui.add(options, o).min(0).max(5);
