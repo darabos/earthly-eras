@@ -1,17 +1,15 @@
 const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-const renderer = new THREE.WebGLRenderer({
-  antialias: false,
-});
-function resize() {
-  const a = Math.min(window.innerWidth, window.innerHeight);
-  renderer.setSize(a, a);
-}
-resize();
+const renderer = new THREE.WebGLRenderer();
 document.body.appendChild(renderer.domElement);
-window.addEventListener('resize', resize());
 const scene = new THREE.Scene();
 const W = 128;
 const H = W;
+renderer.setSize(W, H);
+renderer.domElement.style = `
+  width: calc(min(${100 * (W / H)}vh,100vw));
+  height: calc(min(100vh,${100 * (H / W)}vw));
+  image-rendering: pixelated;
+`;
 function buffer() {
   const b = new THREE.WebGLRenderTarget(W, H, { type: THREE.FloatType });
   b.texture.generateMipmaps = true;
