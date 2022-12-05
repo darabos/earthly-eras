@@ -82,6 +82,9 @@ function Shader(inputs, output, code) {
     uniforms[i] = { value: buffers[i].texture };
     uniformDeclarations += `uniform sampler2D ${i};\n`;
   }
+  for (const o of shaderOptions) {
+    uniformDeclarations += `uniform float ${o};\n`;
+  }
   this.material = new THREE.ShaderMaterial({
     ...baseshader,
     uniforms,
@@ -105,6 +108,9 @@ function Shader(inputs, output, code) {
     quad.material = this.material;
     this.material.uniforms.time = { value: time };
     this.material.uniforms.speedup = { value: options.speedup };
+    for (const o of shaderOptions) {
+      this.material.uniforms[o] = { value: options[o] };
+    }
     if (output === 'display') {
       renderer.setRenderTarget(null);
       renderer.render(scene, camera);
@@ -129,6 +135,7 @@ function swapAll(shaders, name, texture) {
 
 const quad = new THREE.Mesh(new THREE.PlaneBufferGeometry(2, 2, 1, 1));
 scene.add(quad);
+const shaderOptions = ['cloud_opacity'];
 const options = {
   speedup: 0.0,
   debug: 'none',
@@ -192,6 +199,10 @@ function makeUI() {
     });
   gui.add(options, 'record');
   gui.add(options, 'save');
+  for (const o of shaderOptions) {
+    options[o] = 1;
+    gui.add(options, o).min(0).max(5);
+  }
 }
 
 const buffers = {
@@ -358,7 +369,7 @@ const shaders = {
       q = mat2(1.2,1.3,-1.4,1.5)*q - 0.001*time;
       ct += abs(str * noise(q));
     }
-    c += clamp(2.*ct + 2.*cl - 1., 0., 1.);
+    c += cloud_opacity * clamp(2.*ct + 2.*cl - 1., 0., 1.);
 
     // Gain.
     c = c * 3. / (2.5 + c);
