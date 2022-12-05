@@ -43,21 +43,24 @@ vec3 inferno(float t) {
     return c0+t*(c1+t*(c2+t*(c3+t*(c4+t*(c5+t*c6)))));
 
 }`;
-const random = `
-// http://www.jcgt.org/published/0009/03/02/
-uvec3 random(uvec3 v) {
-    v = v * 1664525u + 1013904223u;
-    v.x += v.y*v.z;
-    v.y += v.z*v.x;
-    v.z += v.x*v.y;
-    v ^= v >> 16u;
-    v.x += v.y*v.z;
-    v.y += v.z*v.x;
-    v.z += v.x*v.y;
-    return v;
+const noise = `
+// Simplex noise from https://www.shadertoy.com/view/Msf3WH.
+vec2 hash(vec2 p) {
+  p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
+  return -1. + 2. * fract(sin(p) * 43758.5453123);
 }
-vec3 frandom(vec3 v) {
-  return vec3(random(uvec3(v*W))) * (1.0/float(0xffffffffu));
+float noise(in vec2 p) {
+  const float K1 = 0.366025404; // (sqrt(3)-1)/2;
+  const float K2 = 0.211324865; // (3-sqrt(3))/6;
+  vec2  i = floor(p + (p.x+p.y)*K1);
+  vec2  a = p - i + (i.x+i.y)*K2;
+  // Fixes discontinuity. (Based on https://www.shadertoy.com/view/4tdSWr.)
+  vec2  o = 0.5 + 0.5 * vec2(sign(a.x-a.y), sign(a.y-a.x));
+  vec2  b = a - o + K2;
+  vec2  c = a - 1.0 + 2.0*K2;
+  vec3  h = max(0.5-vec3(dot(a,a), dot(b,b), dot(c,c) ), 0.0);
+  vec3  n = h*h*h*h*vec3(dot(a,hash(i+0.0)), dot(b,hash(i+o)), dot(c,hash(i+1.0)));
+  return dot(n, vec3(70.0));
 }
 `;
 const normal = `
@@ -86,7 +89,7 @@ function Shader(inputs, output, code) {
     #define W ${W}.0
     #define H ${H}.0
     ${inferno}
-    ${random}
+    ${noise}
     ${normal}
     ${uniformDeclarations}
     varying vec2 pos;
@@ -210,7 +213,7 @@ const shaders = {
     `
     o = texture2D(height, pos);
     float avg = texture2DLodEXT(height, pos, 100.0).r;
-    if (time < 1000.) avg *= frandom(vec3(pos, time)).r;
+    if (time < 1000.) avg *= noise(20.*pos + vec2(time));
     if (abs(0.5-pos.x) < 0.2 && abs(0.5-pos.y) < 0.3)
     o.r += 0.01 * pos.x * (0.2 - avg);
     `
@@ -326,7 +329,7 @@ const shaders = {
     'display',
     `
     float h = texture2D(height, pos).r;
-    float cl = texture2D(cloud, pos).g;
+    float cl = texture2DLodEXT(cloud, pos, 2.).g;
     // Surface water.
     float w = max(0., texture2D(water, pos).r - ${soil});
     vec3 s = texture2D(sunlight, pos).rgb;
@@ -348,7 +351,14 @@ const shaders = {
   #endif
 
     // Clouds.
-    c += vec3(cl);
+    float scale = 0.4;
+    float ct = 0.; // Cloud texture.
+    vec2 q = pos;
+    for (float str = 0.4; str > 0.03; str *= 0.6) {
+      q = mat2(1.2,1.3,-1.4,1.5)*q - 0.001*time;
+      ct += abs(str * noise(q));
+    }
+    c += clamp(2.*ct + 2.*cl - 1., 0., 1.);
 
     // Gain.
     c = c * 3. / (2.5 + c);
