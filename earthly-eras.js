@@ -17,6 +17,8 @@ function buffer() {
   b.texture.generateMipmaps = true;
   b.texture.minFilter = THREE.LinearMipmapLinearFilter;
   b.texture.magFilter = THREE.NearestFilter;
+  b.texture.wrapS = THREE.RepeatWrapping;
+  b.texture.wrapT = THREE.RepeatWrapping;
   return b;
 }
 const baseshader = {
@@ -229,9 +231,9 @@ const shaders = {
     `
     vec4 w = texture2D(water, pos);
     float h = texture2D(height, pos).r + w.r;
-    vec2 wind = vec2(-0.01, 0.01);
+    vec2 wind = vec2(-1./W, 1./H);
     o = texture2D(cloud, pos + wind);
-    o.r += w.b;
+    o.r += w.b * 100.;
     float temperature = clamp(1. - h, 0., 0.5);
     // Linear guesses.
     float max_humidity = temperature;
@@ -249,7 +251,7 @@ const shaders = {
     `
     vec4 cl = texture2D(cloud, pos);
     o = texture2D(water, pos);
-    o.r += cl.b;
+    o.r += cl.b * 0.01;
     `
   ),
   preserve_total_water: new Shader(
