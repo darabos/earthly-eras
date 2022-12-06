@@ -2,14 +2,38 @@ const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 const renderer = new THREE.WebGLRenderer();
 document.body.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
-const W = 128;
-const H = W;
-renderer.setSize(W, H);
-renderer.domElement.style = `
-  width: calc(min(${100 * (W / H)}vh,100vw));
-  height: calc(min(100vh,${100 * (H / W)}vw));
-  image-rendering: pixelated;
-`;
+let W, H;
+function resize(res) {
+  const firstTime = W === undefined;
+  W = res;
+  H = res;
+  renderer.setSize(W, H);
+  renderer.domElement.style = `
+    width: calc(min(${100 * (W / H)}vh,100vw));
+    height: calc(min(100vh,${100 * (H / W)}vw));
+    image-rendering: pixelated;
+  `;
+  if (!firstTime) {
+    // Recreate and copy the buffers.
+    const copy = new Shader(['target'], 'target', 'o = texture2D(target, pos);');
+    for (const b in buffers) {
+      if (!buffers[b]) continue;
+      quad.material = copy.material;
+      quad.material.uniforms.target = { value: buffers[b].texture };
+      const newb = buffer();
+      renderer.setRenderTarget(newb);
+      renderer.render(scene, camera);
+      buffers[b].dispose();
+      buffers[b] = newb;
+    }
+    // Clone the shaders to update the #defined W/H.
+    for (const s in shaders) {
+      const sh = shaders[s];
+      shaders[s] = new Shader(sh.inputs, sh.output, sh.code, sh.extraHeader);
+    }
+  }
+}
+resize(128);
 function buffer() {
   const b = new THREE.WebGLRenderTarget(W, H, { type: THREE.FloatType });
   b.texture.generateMipmaps = true;
@@ -72,7 +96,9 @@ vec3 normal(const sampler2D t, const int ch, const vec2 p) {
 `;
 function Shader(inputs, output, code, extraHeader) {
   this.inputs = inputs;
-  this.outputs = output;
+  this.output = output;
+  this.code = code;
+  this.extraHeader = extraHeader;
   const uniforms = {};
   let uniformDeclarations = '';
   for (const i of inputs) {
@@ -117,20 +143,9 @@ function Shader(inputs, output, code, extraHeader) {
     } else {
       renderer.setRenderTarget(buffers.temporary);
       renderer.render(scene, camera);
-      swapAll(shaders, output, buffers.temporary.texture);
-      swapAll(shaders_paused, output, buffers.temporary.texture);
       [buffers.temporary, buffers[output]] = [buffers[output], buffers.temporary];
     }
   };
-}
-
-function swapAll(shaders, name, texture) {
-  for (const sh in shaders) {
-    const us = shaders[sh].material.uniforms;
-    if (us[name]) {
-      us[name] = { value: texture };
-    }
-  }
 }
 
 const quad = new THREE.Mesh(new THREE.PlaneBufferGeometry(2, 2, 1, 1));
@@ -140,6 +155,7 @@ const options = {
   speedup: 0,
   layer: 'none',
   brush_value: 1,
+  resolution: 128,
   record() {
     recorder.start();
   },
@@ -216,12 +232,10 @@ renderer.domElement.addEventListener('pointermove', e => {
       quad.material.uniforms[o] = { value: options[o] };
     }
     const [buf, ch] = options.layer.split('.');
-    quad.material.uniforms.channel = { value: 'rgba'.indexOf(ch) || -1 };
+    quad.material.uniforms.channel = { value: 'rgba'.indexOf(ch) };
     quad.material.uniforms.target = { value: buffers[buf].texture };
     renderer.setRenderTarget(buffers.temporary);
     renderer.render(scene, camera);
-    swapAll(shaders, buf, buffers.temporary.texture);
-    swapAll(shaders_paused, buf, buffers.temporary.texture);
     [buffers.temporary, buffers[buf]] = [buffers[buf], buffers.temporary];
   }
 });
@@ -261,6 +275,7 @@ function makeUI() {
     options[o] = 1;
     gui.add(options, o).min(0).max(5);
   }
+  gui.add(options, 'resolution').min(1).max(2048).step(1).onChange(resize);
 }
 
 const buffers = {
