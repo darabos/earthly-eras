@@ -160,7 +160,6 @@ const options = {
     recorder.start();
   },
   save() {
-    recorder.requestData();
     recorder.stop();
   },
   debug_view() {
