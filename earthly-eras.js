@@ -150,7 +150,7 @@ function Shader(inputs, output, code, extraHeader) {
 
 const quad = new THREE.Mesh(new THREE.PlaneBufferGeometry(2, 2, 1, 1));
 scene.add(quad);
-const shaderOptions = ['cloud_opacity'];
+const shaderOptions = ['cloud_opacity', 'total_water', 'total_land'];
 const options = {
   speedup: 0,
   layer: 'none',
@@ -299,7 +299,7 @@ const shaders = {
     float avg = texture2DLodEXT(height, pos, 100.0).r;
     if (time < 1000.) avg *= noise(20.*pos + vec2(time));
     if (abs(0.5-pos.x) < 0.2 && abs(0.5-pos.y) < 0.3)
-    o.r += 0.01 * pos.x * (0.2 - avg);
+    o.r += 0.01 * pos.x * (total_land*0.2 - avg);
     `
   ),
   evaporate: new Shader(
@@ -347,7 +347,7 @@ const shaders = {
     `
     o = texture2D(water, pos);
     float avg = texture2DLodEXT(water, pos, 100.0).r;
-    o.r += 0.01 * (0.5 - avg);
+    o.r += 0.01 * (0.5*total_water - avg);
     `
   ),
   water_flowing: new Shader(
