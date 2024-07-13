@@ -150,7 +150,7 @@ function Shader(inputs, output, code, extraHeader) {
 
 const quad = new THREE.Mesh(new THREE.PlaneBufferGeometry(2, 2, 1, 1));
 scene.add(quad);
-const shaderOptions = ['cloud_opacity', 'total_water', 'total_land'];
+const shaderOptions = ['cloud_opacity', 'cloud_texture', 'total_water', 'total_land'];
 const options = {
   speedup: 0,
   layer: 'none',
@@ -181,7 +181,7 @@ const options = {
 let origdisplay;
 
 function saveBlob(blob, filename) {
-  url = URL.createObjectURL(blob);
+  const url = URL.createObjectURL(blob);
   hiddenLink.href = url;
   hiddenLink.download = filename;
   hiddenLink.click();
@@ -274,6 +274,7 @@ function makeUI() {
     options[o] = 1;
     gui.add(options, o).min(0).max(5);
   }
+  options.cloud_texture = 0.5;
   gui.add(options, 'resolution').min(1).max(2048).step(1).onChange(resize);
 }
 
@@ -441,7 +442,7 @@ const shaders = {
       q = mat2(1.2,1.3,-1.4,1.5)*q - 0.001*time;
       ct += abs(str * noise(q));
     }
-    c += cloud_opacity * clamp(2.*ct + 2.*cl - 1., 0., 1.);
+    c += cloud_opacity * clamp(mix(1., 2.*ct, cloud_texture) + 2.*cl - 1., 0., 1.);
 
     // Gain.
     c = c * 3. / (2.5 + c);
