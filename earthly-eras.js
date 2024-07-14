@@ -157,7 +157,17 @@ class Shader {
 
 const quad = new THREE.Mesh(new THREE.PlaneBufferGeometry(2, 2, 1, 1));
 scene.add(quad);
-const shaderOptions = ['cloud_opacity', 'cloud_texture', 'total_water', 'total_land', 'debug_boost', 'cross_section_y'];
+const shaderDefaults = {
+  cloud_opacity: 0.5,
+  cloud_texture: 0.25,
+  total_water: 0.25,
+  total_land: 0.4,
+  evaporation: 1,
+  erosion: 1,
+  cross_section_y: 0,
+  debug_boost: 0,
+};
+const shaderOptions = Object.keys(shaderDefaults);
 const options = {
   speedup: 0,
   view_layer: 'none',
@@ -182,14 +192,14 @@ const options = {
         'display',
         /*glsl*/`
         o = texture2D(${buf}, pos);
-        if (${ch ? 'true' : 'false'}) {
+        #if ${ch ? 1 : 0}
           float v = o.${ch} * exp(debug_boost);
           if (v < 0.) {
             o.rgb = viridis(clamp(-v, 0., .8));
           } else {
             o.rgb = inferno(clamp(v, 0., .8));
           }
-        }
+        #endif
         o.a = 1.0;
         `,
       );
@@ -295,12 +305,6 @@ function makeUI() {
   gui.add(options, 'record').name('record video');
   gui.add(options, 'save').name('save video');
   const shaderControls = {};
-  const shaderDefaults = {
-    cloud_opacity: 0.5,
-    cloud_texture: 0.25,
-    cross_section_y: 0,
-    debug_boost: 0,
-  };
   for (const o of shaderOptions) {
     options[o] = shaderDefaults[o] ?? 1;
     shaderControls[o] = gui.add(options, o).min(0).max(5);
@@ -329,10 +333,13 @@ const shaders = {
     /*glsl*/`
     o = texture2D(height, pos);
     float avg = texture2DLodEXT(height, pos, 100.0).r;
-    if (time < 1000.) avg *= noise(20.*pos + vec2(time));
-    if (abs(0.5-pos.x) < 0.2 && abs(0.5-pos.y) < 0.3) {
-      o.r += 0.01 * pos.x * (total_land*0.2 - avg);
-    }
+    // DEBUG: Compensate for total land in a central region.
+    // if (time < 1000.) avg *= noise(20.*pos + vec2(time));
+    // if (abs(0.5-pos.x) < 0.2 && abs(0.5-pos.y) < 0.3) {
+    //   o.r += 0.01 * pos.x * (total_land*0.2 - avg);
+    // }
+    o.r += 0.01 * (total_land - avg);
+    o.r = clamp(o.r, 0., 1.);
     `
   ),
   evaporate: new Shader(
@@ -341,7 +348,7 @@ const shaders = {
     /*glsl*/`
     o = texture2D(water, pos);
     // Evaporated amount.
-    o.b = clamp(o.r - ${soil}, 0., 0.01 * ${soil});
+    o.b = clamp(o.r - ${soil}, 0., evaporation*0.0001);
     o.r -= o.b;
     `
   ),
@@ -360,8 +367,10 @@ const shaders = {
     float max_cloud = temperature;
 
     // Rainfall.
-    o.b = max(0., o.r - max_humidity - max_cloud);
+    o.b = 0.2*max(0., o.r - max_humidity - max_cloud);
+    // Water content.
     o.r -= o.b;
+    // Cloud density.
     o.g = max(0., o.r - max_humidity);
     `
   ),
@@ -380,7 +389,7 @@ const shaders = {
     /*glsl*/`
     o = texture2D(water, pos);
     float avg = texture2DLodEXT(water, pos, 100.0).r;
-    o.r += 0.01 * (0.5*total_water - avg);
+    o.r += 0.01 * (total_water - avg);
     `
   ),
   water_flowing: new Shader(
@@ -398,16 +407,16 @@ const shaders = {
         if (dx == 0.0 && dy == 0.0) continue;
         vec4 h2 = texture2D(height, pos + vec2(dx/W, dy/H));
         vec4 w2 = texture2D(water, pos + vec2(dx/W, dy/H));
-        wout += clamp(h+w-h2-w2, 0.0, w.r);
-        win += clamp(h2+w2-h-w, 0.0, w2.r);
+        float flow_out = clamp(h.r+w.r-h2.r-w2.r, -w2.r, w.r);
+        wout += clamp(flow_out * vec4(1., w.g/w.r, 0., 0.), 0., 1.);
+        win += clamp(-flow_out * vec4(1., w2.g/w2.r, 0., 0.), 0., 1.);
       }
     }
     float scale = 1.0 / (SIZE*2.0 + 1.0) / (SIZE*2.0 + 1.0);
     o = clamp(w + scale*win - scale*wout, 0.0, 1.0);
     // Erosion.
     float capacity = win.r + wout.r;
-    o.a = capacity;
-    o.b = capacity - o.g;
+    o.b = 0.01*(capacity - o.g);
     // Carried sediment.
     o.g += o.b;
     `
@@ -418,7 +427,7 @@ const shaders = {
     /*glsl*/`
     vec4 w = texture2D(water, pos);
     o = texture2D(height, pos);
-    o.r += 0.01*w.b;
+    o.r -= 0.01*erosion*w.b;
     o.b = o.r + max(0., w.r - ${soil}); // Ground + water height.
     `
   ),
@@ -523,14 +532,21 @@ shaders_cross.display = new Shader(
   vec4 w = texture2D(water, p);
   vec4 cl = texture2D(cloud, p);
   float v = texture2D(vegetation, p).r;
-  float y = pos.y*5.-0.1;
+  float y = pos.y*2.-0.1;
   if (y<h) {
     o = vec4(0.4, 0.3+v, 0.1, 1.0);
+  } else if (y<h+min(0.1*w.g,w.r)) {
+    o = vec4(0., 0.1, 0.2, .3);
   } else if (y<h+w.r) {
     o = vec4(0., 0.1, 0.5, 1.0);
+  } else if (y>1.9-cl.g) {
+    o = vec4(1.);
   } else {
     o = vec4(0.6, 0.7, 1.0, 1.0)*(1.-cl.b);
   }
+  // DEBUG: Show some amount as a chart overlay.
+  // if (y>2.-w.a*10.) o *= 0.9;
+  // Horizontal line at the cross section.
   if (p.y < pos.y && p.y+0.005 > pos.y) {
     o *= 1.2;
   }
