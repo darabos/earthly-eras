@@ -52,7 +52,7 @@ const baseshader = {
     }
   `,
 };
-const inferno = /*glsl*/`
+const predefs = /*glsl*/`
 // From https://observablehq.com/@flimsyhat/webgl-color-maps.
 vec3 inferno(float t) {
     const vec3 c0 = vec3(0.0002189403691192265, 0.001651004631001012, -0.01948089843709184);
@@ -63,8 +63,17 @@ vec3 inferno(float t) {
     const vec3 c5 = vec3(-71.31942824499214, 32.62606426397723, 73.20951985803202);
     const vec3 c6 = vec3(25.13112622477341, -12.24266895238567, -23.07032500287172);
     return c0+t*(c1+t*(c2+t*(c3+t*(c4+t*(c5+t*c6)))));
-}`;
-const noise = /*glsl*/`
+}
+vec3 viridis(float t) {
+  const vec3 c0 = vec3(0.2777273272234177, 0.005407344544966578, 0.3340998053353061);
+  const vec3 c1 = vec3(0.1050930431085774, 1.404613529898575, 1.384590162594685);
+  const vec3 c2 = vec3(-0.3308618287255563, 0.214847559468213, 0.09509516302823659);
+  const vec3 c3 = vec3(-4.634230498983486, -5.799100973351585, -19.33244095627987);
+  const vec3 c4 = vec3(6.228269936347081, 14.17993336680509, 56.69055260068105);
+  const vec3 c5 = vec3(4.776384997670288, -13.74514537774601, -65.35303263337234);
+  const vec3 c6 = vec3(-5.435455855934631, 4.645852612178535, 26.3124352495832);
+  return c0+t*(c1+t*(c2+t*(c3+t*(c4+t*(c5+t*c6)))));
+}
 // Simplex noise from https://www.shadertoy.com/view/Msf3WH.
 vec2 hash(vec2 p) {
   p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
@@ -83,8 +92,6 @@ float noise(in vec2 p) {
   vec3  n = h*h*h*h*vec3(dot(a,hash(i+0.0)), dot(b,hash(i+o)), dot(c,hash(i+1.0)));
   return dot(n, vec3(70.0));
 }
-`;
-const normal = /*glsl*/`
 // https://iquilezles.org/articles/normalsSDF/
 vec3 normal(const sampler2D t, const int ch, const vec2 p) {
   const vec2 h = vec2(1.0/W, 0);
@@ -114,9 +121,7 @@ class Shader {
       fragmentShader: /*glsl*/`
     #define W ${W}.0
     #define H ${H}.0
-    ${inferno}
-    ${noise}
-    ${normal}
+    ${predefs}
     ${uniformDeclarations}
     varying vec2 pos;
     uniform float time;
@@ -155,7 +160,8 @@ scene.add(quad);
 const shaderOptions = ['cloud_opacity', 'cloud_texture', 'total_water', 'total_land', 'debug_boost', 'cross_section_y'];
 const options = {
   speedup: 0,
-  layer: 'none',
+  view_layer: 'none',
+  paint_layer: 'height.r',
   brush_value: 1,
   resolution: 128,
   record() {
@@ -165,7 +171,7 @@ const options = {
     recorder.stop();
   },
   debug_view() {
-    const v = options.layer;
+    const v = options.view_layer;
     if (!origdisplay) origdisplay = shaders.display;
     if (v === 'none') {
       shaders.display = origdisplay;
@@ -174,7 +180,18 @@ const options = {
       shaders.display = new Shader(
         [buf],
         'display',
-        `o = texture2D(${buf}, pos); ` + (ch ? `o.rgb = inferno(pow(clamp(o.${ch}, 0., 1.), debug_boost));` : '') + ' o.a = 1.0;',
+        /*glsl*/`
+        o = texture2D(${buf}, pos);
+        if (${ch ? 'true' : 'false'}) {
+          float v = o.${ch} * exp(debug_boost);
+          if (v < 0.) {
+            o.rgb = viridis(clamp(-v, 0., .8));
+          } else {
+            o.rgb = inferno(clamp(v, 0., .8));
+          }
+        }
+        o.a = 1.0;
+        `,
       );
     }
     shaders_paused.display = shaders.display;
@@ -232,7 +249,7 @@ renderer.domElement.addEventListener('pointermove', e => {
     for (const o of shaderOptions) {
       quad.material.uniforms[o] = { value: options[o] };
     }
-    const [buf, ch] = options.layer.split('.');
+    const [buf, ch] = options.paint_layer.split('.');
     quad.material.uniforms.channel = { value: 'rgba'.indexOf(ch) };
     quad.material.uniforms.target = { value: buffers[buf].texture };
     renderer.setRenderTarget(buffers.temporary);
@@ -268,12 +285,13 @@ function animate() {
 function makeUI() {
   const gui = new lil.GUI();
   gui.add(options, 'speedup').min(-4).max(2);
-  gui.add(options, 'layer', [
+  const layers = [
     'none',
     ...Object.keys(buffers).flatMap(b => [b, `${b}.r`, `${b}.g`, `${b}.b`, `${b}.a`]),
-  ]);
+  ];
+  gui.add(options, 'view_layer', layers).onChange(options.debug_view);
+  gui.add(options, 'paint_layer', layers);
   gui.add(options, 'brush_value').name('brush value').min(-1).max(1);
-  gui.add(options, 'debug_view').name('view selected layer');
   gui.add(options, 'record').name('record video');
   gui.add(options, 'save').name('save video');
   const shaderControls = {};
@@ -281,6 +299,7 @@ function makeUI() {
     cloud_opacity: 0.5,
     cloud_texture: 0.25,
     cross_section_y: 0,
+    debug_boost: 0,
   };
   for (const o of shaderOptions) {
     options[o] = shaderDefaults[o] ?? 1;
@@ -288,6 +307,7 @@ function makeUI() {
   }
   gui.add(options, 'resolution').min(1).max(2048).step(1).onChange(resize);
   shaderControls['cross_section_y'].name('cross section Y').min(0).max(H).step(1);
+  shaderControls['debug_boost'].min(-5);
 }
 
 const buffers = {
@@ -385,8 +405,10 @@ const shaders = {
     float scale = 1.0 / (SIZE*2.0 + 1.0) / (SIZE*2.0 + 1.0);
     o = clamp(w + scale*win - scale*wout, 0.0, 1.0);
     // Erosion.
-    float capacity = 0.01 * (win.r + wout.r);
+    float capacity = win.r + wout.r;
+    o.a = capacity;
     o.b = capacity - o.g;
+    // Carried sediment.
     o.g += o.b;
     `
   ),
