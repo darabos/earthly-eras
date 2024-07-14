@@ -8,7 +8,7 @@ function resize(res) {
   W = res;
   H = res;
   renderer.setSize(W, H);
-  renderer.domElement.style = `
+  renderer.domElement.style = /*css*/`
     width: calc(min(${100 * (W / H)}vh,100vw));
     height: calc(min(100vh,${100 * (H / W)}vw));
     image-rendering: pixelated;
@@ -44,7 +44,7 @@ function buffer() {
   return b;
 }
 const baseshader = {
-  vertexShader: `
+  vertexShader: /*glsl*/`
     varying vec2 pos;
     void main() {
       pos = uv;
@@ -52,7 +52,7 @@ const baseshader = {
     }
   `,
 };
-const inferno = `
+const inferno = /*glsl*/`
 // From https://observablehq.com/@flimsyhat/webgl-color-maps.
 vec3 inferno(float t) {
     const vec3 c0 = vec3(0.0002189403691192265, 0.001651004631001012, -0.01948089843709184);
@@ -64,7 +64,7 @@ vec3 inferno(float t) {
     const vec3 c6 = vec3(25.13112622477341, -12.24266895238567, -23.07032500287172);
     return c0+t*(c1+t*(c2+t*(c3+t*(c4+t*(c5+t*c6)))));
 }`;
-const noise = `
+const noise = /*glsl*/`
 // Simplex noise from https://www.shadertoy.com/view/Msf3WH.
 vec2 hash(vec2 p) {
   p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
@@ -84,7 +84,7 @@ float noise(in vec2 p) {
   return dot(n, vec3(70.0));
 }
 `;
-const normal = `
+const normal = /*glsl*/`
 // https://iquilezles.org/articles/normalsSDF/
 vec3 normal(const sampler2D t, const int ch, const vec2 p) {
   const vec2 h = vec2(1.0/W, 0);
@@ -94,23 +94,24 @@ vec3 normal(const sampler2D t, const int ch, const vec2 p) {
     texture2D(t, p-h.yx)[ch] - texture2D(t, p+h.yx)[ch]));
 }
 `;
-function Shader(inputs, output, code, extraHeader) {
-  this.inputs = inputs;
-  this.output = output;
-  this.code = code;
-  this.extraHeader = extraHeader;
-  const uniforms = {};
-  let uniformDeclarations = '';
-  for (const i of inputs) {
-    uniformDeclarations += `uniform sampler2D ${i};\n`;
-  }
-  for (const o of shaderOptions) {
-    uniformDeclarations += `uniform float ${o};\n`;
-  }
-  this.material = new THREE.ShaderMaterial({
-    ...baseshader,
-    uniforms,
-    fragmentShader: `
+class Shader {
+  constructor(inputs, output, code, extraHeader) {
+    this.inputs = inputs;
+    this.output = output;
+    this.code = code;
+    this.extraHeader = extraHeader;
+    const uniforms = {};
+    let uniformDeclarations = '';
+    for (const i of inputs) {
+      uniformDeclarations += `uniform sampler2D ${i};\n`;
+    }
+    for (const o of shaderOptions) {
+      uniformDeclarations += `uniform float ${o};\n`;
+    }
+    this.material = new THREE.ShaderMaterial({
+      ...baseshader,
+      uniforms,
+      fragmentShader: /*glsl*/`
     #define W ${W}.0
     #define H ${H}.0
     ${inferno}
@@ -126,31 +127,32 @@ function Shader(inputs, output, code, extraHeader) {
       ${code}
       gl_FragColor = o;
     }`,
-  });
-  this.render = time => {
-    quad.material = this.material;
-    for (const i of inputs) {
-      this.material.uniforms[i] = { value: buffers[i].texture };
-    }
-    this.material.uniforms.time = { value: time };
-    this.material.uniforms.speedup = { value: options.speedup };
-    for (const o of shaderOptions) {
-      this.material.uniforms[o] = { value: options[o] };
-    }
-    if (output === 'display') {
-      renderer.setRenderTarget(null);
-      renderer.render(scene, camera);
-    } else {
-      renderer.setRenderTarget(buffers.temporary);
-      renderer.render(scene, camera);
-      [buffers.temporary, buffers[output]] = [buffers[output], buffers.temporary];
-    }
-  };
+    });
+    this.render = time => {
+      quad.material = this.material;
+      for (const i of inputs) {
+        this.material.uniforms[i] = { value: buffers[i].texture };
+      }
+      this.material.uniforms.time = { value: time };
+      this.material.uniforms.speedup = { value: options.speedup };
+      for (const o of shaderOptions) {
+        this.material.uniforms[o] = { value: options[o] };
+      }
+      if (output === 'display') {
+        renderer.setRenderTarget(null);
+        renderer.render(scene, camera);
+      } else {
+        renderer.setRenderTarget(buffers.temporary);
+        renderer.render(scene, camera);
+        [buffers.temporary, buffers[output]] = [buffers[output], buffers.temporary];
+      }
+    };
+  }
 }
 
 const quad = new THREE.Mesh(new THREE.PlaneBufferGeometry(2, 2, 1, 1));
 scene.add(quad);
-const shaderOptions = ['cloud_opacity', 'cloud_texture', 'total_water', 'total_land'];
+const shaderOptions = ['cloud_opacity', 'cloud_texture', 'total_water', 'total_land', 'debug_boost', 'cross_section_y'];
 const options = {
   speedup: 0,
   layer: 'none',
@@ -172,7 +174,7 @@ const options = {
       shaders.display = new Shader(
         [buf],
         'display',
-        `o = texture2D(${buf}, pos); o.a = 1.0;` + (ch ? `o.rgb = inferno(clamp(o.${ch}, 0., 1.));` : '')
+        `o = texture2D(${buf}, pos); ` + (ch ? `o.rgb = inferno(pow(clamp(o.${ch}, 0., 1.), debug_boost));` : '') + ' o.a = 1.0;',
       );
     }
     shaders_paused.display = shaders.display;
@@ -206,14 +208,14 @@ renderer.domElement.addEventListener('pointerenter', e => {
 let paintShader = new Shader(
   ['target'],
   'target',
-  `
+  /*glsl*/`
   o = texture2D(target, pos);
   if (length(pos - vec2(mouse_x, 1. - mouse_y)) < 5./W) {
     if (channel < 0) o = vec4(value);
     else o[channel] = value;
   }
   `,
-  `
+  /*glsl*/`
   uniform float mouse_x;
   uniform float mouse_y;
   uniform int channel;
@@ -245,14 +247,18 @@ function animate() {
   requestAnimationFrame(animate);
   const t = Math.pow(10, options.speedup);
   time += t;
+  let shds = shaders;
+  if (options.cross_section_y > 0) {
+    shds = shaders_cross;
+  }
   if (t > 0.1) {
     for (tostep += t; tostep >= 1; --tostep) {
-      for (const k in shaders) {
+      for (const k in shds) {
         if (k === 'display' || k.startsWith('x')) continue;
-        shaders[k].render(time);
+        shds[k].render(time);
       }
     }
-    shaders.display.render(time);
+    shds.display.render(time);
   } else {
     for (const k in shaders_paused) {
       shaders_paused[k].render(time);
@@ -270,12 +276,18 @@ function makeUI() {
   gui.add(options, 'debug_view').name('view selected layer');
   gui.add(options, 'record').name('record video');
   gui.add(options, 'save').name('save video');
+  const shaderControls = {};
+  const shaderDefaults = {
+    cloud_opacity: 0.5,
+    cloud_texture: 0.25,
+    cross_section_y: 0,
+  };
   for (const o of shaderOptions) {
-    options[o] = 1;
-    gui.add(options, o).min(0).max(5);
+    options[o] = shaderDefaults[o] ?? 1;
+    shaderControls[o] = gui.add(options, o).min(0).max(5);
   }
-  options.cloud_texture = 0.5;
   gui.add(options, 'resolution').min(1).max(2048).step(1).onChange(resize);
+  shaderControls['cross_section_y'].name('cross section Y').min(0).max(H).step(1);
 }
 
 const buffers = {
@@ -294,18 +306,19 @@ const shaders = {
   preserve_total_land: new Shader(
     ['height'],
     'height',
-    `
+    /*glsl*/`
     o = texture2D(height, pos);
     float avg = texture2DLodEXT(height, pos, 100.0).r;
     if (time < 1000.) avg *= noise(20.*pos + vec2(time));
-    if (abs(0.5-pos.x) < 0.2 && abs(0.5-pos.y) < 0.3)
-    o.r += 0.01 * pos.x * (total_land*0.2 - avg);
+    if (abs(0.5-pos.x) < 0.2 && abs(0.5-pos.y) < 0.3) {
+      o.r += 0.01 * pos.x * (total_land*0.2 - avg);
+    }
     `
   ),
   evaporate: new Shader(
     ['water'],
     'water',
-    `
+    /*glsl*/`
     o = texture2D(water, pos);
     // Evaporated amount.
     o.b = clamp(o.r - ${soil}, 0., 0.01 * ${soil});
@@ -315,7 +328,7 @@ const shaders = {
   clouds: new Shader(
     ['water', 'cloud', 'height'],
     'cloud',
-    `
+    /*glsl*/`
     vec4 w = texture2D(water, pos);
     float h = texture2D(height, pos).r + w.r;
     vec2 wind = vec2(-1./W, 1./H);
@@ -335,7 +348,7 @@ const shaders = {
   rain: new Shader(
     ['water', 'cloud'],
     'water',
-    `
+    /*glsl*/`
     vec4 cl = texture2D(cloud, pos);
     o = texture2D(water, pos);
     o.r += cl.b * 0.01;
@@ -344,7 +357,7 @@ const shaders = {
   preserve_total_water: new Shader(
     ['water'],
     'water',
-    `
+    /*glsl*/`
     o = texture2D(water, pos);
     float avg = texture2DLodEXT(water, pos, 100.0).r;
     o.r += 0.01 * (0.5*total_water - avg);
@@ -353,7 +366,7 @@ const shaders = {
   water_flowing: new Shader(
     ['height', 'water'],
     'water',
-    `
+    /*glsl*/`
     // Flowing.
     vec4 h = texture2D(height, pos);
     vec4 w = texture2D(water, pos);
@@ -380,17 +393,17 @@ const shaders = {
   water_erosion: new Shader(
     ['height', 'water'],
     'height',
-    `
+    /*glsl*/`
     vec4 w = texture2D(water, pos);
     o = texture2D(height, pos);
-    o.r += w.b;
+    o.r += 0.01*w.b;
     o.b = o.r + max(0., w.r - ${soil}); // Ground + water height.
     `
   ),
   sunlight: new Shader(
     ['height', 'sunlight'],
     'sunlight',
-    `
+    /*glsl*/`
     vec3 sun = vec3(1, 2, 1);
     vec3 nor = normal(height, 0, pos);
     float direct = clamp(dot(nor, normalize(sun)), 0., 1.);
@@ -400,18 +413,18 @@ const shaders = {
   vegetation: new Shader(
     ['height', 'water', 'vegetation'],
     'vegetation',
-    `
+    /*glsl*/`
     float w = texture2D(water, pos).r;
     o = texture2D(vegetation, pos);
     float stable;
     if (w < ${soil}) stable = pow(w / ${soil}, 0.2);
-    o.r = o.r*0.999 + 0.001*stable;
+    o.r = mix(o.r, stable, 0.001);
     `
   ),
   display: new Shader(
     ['height', 'water', 'cloud', 'sunlight', 'vegetation'],
     'display',
-    `
+    /*glsl*/`
     float h = texture2D(height, pos).r;
     float cl = texture2DLodEXT(cloud, pos, 2.).g;
     // Surface water.
@@ -455,7 +468,7 @@ const shaders_paused = {
   sunlight: new Shader(
     ['height'],
     'sunlight',
-    `
+    /*glsl*/`
     // Day-cycle model.
     float t = 20. * time;
     vec3 sun = vec3(cos(t), 0.1+0.8*sin(t), 2.+0.2*sin(t));
@@ -478,5 +491,28 @@ const shaders_paused = {
   ),
   display: shaders.display,
 };
+const shaders_cross = {...shaders};
+shaders_cross.display = new Shader(
+  ['height', 'water', 'cloud', 'vegetation'],
+  'display',
+  /*glsl*/`
+  vec2 p = vec2(pos.x, cross_section_y/H);
+  float h = texture2D(height, p).r;
+  vec4 w = texture2D(water, p);
+  vec4 cl = texture2D(cloud, p);
+  float v = texture2D(vegetation, p).r;
+  float y = pos.y*5.-0.1;
+  if (y<h) {
+    o = vec4(0.4, 0.3+v, 0.1, 1.0);
+  } else if (y<h+w.r) {
+    o = vec4(0., 0.1, 0.5, 1.0);
+  } else {
+    o = vec4(0.6, 0.7, 1.0, 1.0)*(1.-cl.b);
+  }
+  if (p.y < pos.y && p.y+0.005 > pos.y) {
+    o *= 1.2;
+  }
+  `,
+);
 animate(0);
 makeUI();
