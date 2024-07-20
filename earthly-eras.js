@@ -472,11 +472,9 @@ const shaders = {
     c *= sea / (sea + w);
 
     // Specular.
-  #if 0
     vec3 sun = normalize(vec3(1, 2, 1));
     vec3 nor = normal(height, 2, pos);
     c += min(w, 0.01)*100.*pow(clamp(dot(nor, sun), 0., 1.), 16.);
-  #endif
 
     // Clouds.
     float scale = 0.4;
