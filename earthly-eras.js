@@ -182,12 +182,11 @@ const options = {
   },
   debug_view() {
     const v = options.view_layer;
-    if (!origdisplay) origdisplay = shaders.display;
     if (v === 'none') {
-      shaders.display = origdisplay;
+      displayShader = defaultDisplayShader;
     } else {
       const [buf, ch] = v.split('.');
-      shaders.display = new Shader(
+      displayShader = new Shader(
         [buf],
         'display',
         /*glsl*/`
@@ -204,10 +203,8 @@ const options = {
         `,
       );
     }
-    shaders_paused.display = shaders.display;
   },
 };
-let origdisplay;
 
 function saveBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
@@ -274,22 +271,17 @@ function animate() {
   requestAnimationFrame(animate);
   const t = Math.pow(10, options.speedup);
   time += t;
-  let shds = shaders;
-  if (options.cross_section_y > 0) {
-    shds = shaders_cross;
-  }
   if (t > 0.1) {
     for (tostep += t; tostep >= 1; --tostep) {
-      for (const k in shds) {
-        if (k === 'display' || k.startsWith('x')) continue;
-        shds[k].render(time);
+      for (const k in shaders) {
+        if (k.startsWith('x')) continue; // To quickly disable a shader.
+        shaders[k].render(time);
       }
     }
-    shds.display.render(time);
+    displayShader.render(time);
   } else {
-    for (const k in shaders_paused) {
-      shaders_paused[k].render(time);
-    }
+    dayCycleShader.render(time);
+    displayShader.render(time);
   }
 }
 function makeUI() {
@@ -452,10 +444,33 @@ const shaders = {
     o.r = mix(o.r, stable, 0.001);
     `
   ),
-  display: new Shader(
-    ['height', 'water', 'cloud', 'sunlight', 'vegetation'],
-    'display',
-    /*glsl*/`
+};
+const crossSectionShaderText = /*glsl*/`
+  vec2 p = vec2(pos.x, cross_section_y/H);
+  float h = texture2D(height, p).r;
+  vec4 w = texture2D(water, p);
+  vec4 cl = texture2D(cloud, p);
+  float v = texture2D(vegetation, p).r;
+  float y = pos.y*2.-0.1;
+  if (y<h) {
+    o = vec4(0.4, 0.3+v, 0.1, 1.0);
+  } else if (y<h+min(0.1*w.g,w.r)) {
+    o = vec4(0., 0.1, 0.2, .3);
+  } else if (y<h+w.r) {
+    o = vec4(0., 0.1, 0.5, 1.0);
+  } else if (y>1.9-cl.g) {
+    o = vec4(1.);
+  } else {
+    o = vec4(0.6, 0.7, 1.0, 1.0)*(1.-cl.b);
+  }
+  // DEBUG: Show some amount as a chart overlay.
+  // if (y>2.-w.a*10.) o *= 0.9;
+  // Horizontal line at the cross section.
+  if (p.y < pos.y && p.y+0.005 > pos.y) {
+    o *= 1.2;
+  }
+`;
+const topDownShaderText = /*glsl*/`
     float h = texture2D(height, pos).r;
     float cl = texture2DLodEXT(cloud, pos, 2.).g;
     // Surface water.
@@ -490,11 +505,19 @@ const shaders = {
     c = c * 3. / (2.5 + c);
     c = pow(c, vec3(0.4545));
     o = vec4(c, 1.0);
-    `
-  ),
-};
-const shaders_paused = {
-  sunlight: new Shader(
+    `;
+const defaultDisplayShader = new Shader(
+  ['height', 'water', 'cloud', 'sunlight', 'vegetation'],
+  'display',
+  /*glsl*/`
+  if (cross_section_y > 0.) {
+    ${crossSectionShaderText}
+  } else {
+    ${topDownShaderText}
+  }
+  `,
+ );
+const dayCycleShader = new Shader(
     ['height'],
     'sunlight',
     /*glsl*/`
@@ -517,38 +540,7 @@ const shaders_paused = {
 
     o = vec4(mix(s, c, clamp(-1.-speedup, 0., 1.)), 1.);
     `
-  ),
-  display: shaders.display,
-};
-const shaders_cross = {...shaders};
-shaders_cross.display = new Shader(
-  ['height', 'water', 'cloud', 'vegetation'],
-  'display',
-  /*glsl*/`
-  vec2 p = vec2(pos.x, cross_section_y/H);
-  float h = texture2D(height, p).r;
-  vec4 w = texture2D(water, p);
-  vec4 cl = texture2D(cloud, p);
-  float v = texture2D(vegetation, p).r;
-  float y = pos.y*2.-0.1;
-  if (y<h) {
-    o = vec4(0.4, 0.3+v, 0.1, 1.0);
-  } else if (y<h+min(0.1*w.g,w.r)) {
-    o = vec4(0., 0.1, 0.2, .3);
-  } else if (y<h+w.r) {
-    o = vec4(0., 0.1, 0.5, 1.0);
-  } else if (y>1.9-cl.g) {
-    o = vec4(1.);
-  } else {
-    o = vec4(0.6, 0.7, 1.0, 1.0)*(1.-cl.b);
-  }
-  // DEBUG: Show some amount as a chart overlay.
-  // if (y>2.-w.a*10.) o *= 0.9;
-  // Horizontal line at the cross section.
-  if (p.y < pos.y && p.y+0.005 > pos.y) {
-    o *= 1.2;
-  }
-  `,
-);
+  );
+let displayShader = defaultDisplayShader;
 animate(0);
 makeUI();
