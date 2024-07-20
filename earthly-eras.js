@@ -7,12 +7,15 @@ function resize(res) {
   const firstTime = W === undefined;
   W = res;
   H = res;
-  renderer.setSize(W, H);
-  renderer.domElement.style = /*css*/`
+  const e = renderer.domElement;
+  e.style = /*css*/`
     width: calc(min(${100 * (W / H)}vh,100vw));
     height: calc(min(100vh,${100 * (H / W)}vw));
     image-rendering: pixelated;
   `;
+  const dpr = 1;//window.devicePixelRatio;
+  const size = Math.min(e.clientWidth, e.clientHeight) * dpr;
+  renderer.setSize(size, size, false);
   if (!firstTime) {
     // Recreate and copy the buffers.
     const copy = new Shader(['target'], 'target', 'o = texture2D(target, pos);');
@@ -45,9 +48,9 @@ function buffer() {
 }
 const baseshader = {
   vertexShader: /*glsl*/`
-    varying vec2 pos;
+    varying vec2 vpos;
     void main() {
-      pos = uv;
+      vpos = uv;
       gl_Position = vec4(position, 1.0);
     }
   `,
@@ -100,6 +103,18 @@ vec3 normal(const sampler2D t, const int ch, const vec2 p) {
     2.0*h.x,
     texture2D(t, p-h.yx)[ch] - texture2D(t, p+h.yx)[ch]));
 }
+// From https://www.shadertoy.com/view/Xds3zN
+mat3 setCamera(in vec3 ro, in vec3 ta) {
+	vec3 cw = normalize(ta-ro);
+	vec3 up = vec3(0.,0.,1.);
+	vec3 cu = normalize( cross(cw,up) );
+	vec3 cv =          ( cross(cu,cw) );
+  return mat3( cu, cv, cw );
+}
+mat2 rot(float an) {
+  return mat2(cos(an),-sin(an),sin(an),cos(an));
+}
+const float PI = 3.14159265359;
 `;
 class Shader {
   constructor(inputs, output, code, extraHeader) {
@@ -123,12 +138,13 @@ class Shader {
     #define H ${H}.0
     ${predefs}
     ${uniformDeclarations}
-    varying vec2 pos;
+    varying vec2 vpos;
     uniform float time;
     uniform float speedup;
     ${extraHeader || ''}
     void main() {
       vec4 o = vec4(0.0);
+      vec2 pos = vpos;
       ${code}
       gl_FragColor = o;
     }`,
@@ -166,6 +182,9 @@ const shaderDefaults = {
   erosion: 1,
   cross_section_y: 0,
   debug_boost: 0,
+  camera_angle: 1,
+  camera_rotation: 0,
+  debug: 1,
 };
 const shaderOptions = Object.keys(shaderDefaults);
 const options = {
@@ -471,47 +490,79 @@ const crossSectionShaderText = /*glsl*/`
   }
 `;
 const topDownShaderText = /*glsl*/`
-    float h = texture2D(height, pos).r;
-    float cl = texture2DLodEXT(cloud, pos, 2.).g;
-    // Surface water.
-    float w = max(0., texture2D(water, pos).r - ${soil});
-    vec3 s = texture2D(sunlight, pos).rgb;
-    float v = texture2D(vegetation, pos).r;
+  pos.x = floor(pos.x * W)/W;
+  pos.y = floor(pos.y * H)/H;
+  float h = texture2D(height, pos).r;
+  float cl = texture2DLodEXT(cloud, pos, 2.).g;
+  // Surface water.
+  float w = max(0., texture2D(water, pos).r - ${soil});
+  vec3 s = texture2D(sunlight, pos).rgb;
+  float v = texture2D(vegetation, pos).r;
 
-    vec3 c = vec3(1.);
-    c.rb *= 1. - v;
-    c *= s;
+  vec3 c = vec3(1.);
+  c.rb *= 1. - v;
+  c *= s;
 
-    // Underwater.
-    vec3 sea = vec3(0.01, 0.1, 0.3);
-    c *= sea / (sea + w);
+  // Underwater.
+  vec3 sea = vec3(0.01, 0.1, 0.3);
+  c *= sea / (sea + w);
 
-    // Specular.
-    vec3 sun = normalize(vec3(1, 2, 1));
-    vec3 nor = normal(height, 2, pos);
-    c += min(w, 0.01)*100.*pow(clamp(dot(nor, sun), 0., 1.), 16.);
+  // Specular.
+  vec3 sun = normalize(vec3(1, 2, 1));
+  vec3 nor = normal(height, 2, pos);
+  c += min(w, 0.01)*100.*pow(clamp(dot(nor, sun), 0., 1.), 16.);
 
-    // Clouds.
-    float scale = 0.4;
-    float ct = 0.; // Cloud texture.
-    vec2 q = pos;
-    for (float str = 0.4; str > 0.03; str *= 0.6) {
-      q = mat2(1.2,1.3,-1.4,1.5)*q - 0.001*time;
-      ct += abs(str * noise(q));
+  // Clouds.
+  float scale = 0.4;
+  float ct = 0.; // Cloud texture.
+  vec2 q = pos;
+  for (float str = 0.4; str > 0.03; str *= 0.6) {
+    q = mat2(1.2,1.3,-1.4,1.5)*q - 0.001*time;
+    ct += abs(str * noise(q));
+  }
+  c += cloud_opacity * clamp(mix(1., 2.*ct, cloud_texture) + 2.*cl - 1., 0., 1.);
+
+  // Gain.
+  c = c * 3. / (2.5 + c);
+  c = pow(c, vec3(0.4545));
+  o = vec4(c, 1.0);
+  `;
+const raymarchingShaderText = /*glsl*/`
+  // ray origin (camera position)
+  vec3 ro = vec3(0., 0., 1.);
+  ro.xz = rot(camera_angle) * ro.xz;
+  ro.xy = rot(camera_rotation+PI*.5) * ro.xy;
+  // camera target
+  vec3 ta = vec3(0., 0., 0.);
+  mat3 ca = setCamera(ro, ta);
+  // ray direction
+  float fov = 1.2;
+  vec3 rd = ca * normalize(vec3(2.*(pos - 0.5), 1./fov));
+  o = vec4(ro+2.*rd,1.);
+  for (int i=0; i<200; i++) {
+    vec3 p = ro + float(i)*0.01*rd;
+    vec2 cell = vec2(floor(p.x * W)/W, floor(p.y * H)/H);
+    if (abs(cell.x) > .5 || abs(cell.y) > .5) continue;
+    cell += 0.5;
+    float h = texture2D(height, cell).r*0.3;
+    vec3 s = texture2D(sunlight, cell).rgb;
+    if (p.z>0. && p.z < h) {
+      // vec3 nor = normal(height, 0, cell);
+      // float dif = clamp(dot(nor, normalize(vec3(1., 2., 1.))), 0., 1.);
+      // o = vec4(float(i)/200.);
+      o = vec4(inferno(h*4.), 1.);//cell,1.,1.);
+      break;
     }
-    c += cloud_opacity * clamp(mix(1., 2.*ct, cloud_texture) + 2.*cl - 1., 0., 1.);
-
-    // Gain.
-    c = c * 3. / (2.5 + c);
-    c = pow(c, vec3(0.4545));
-    o = vec4(c, 1.0);
-    `;
+  }
+  `;
 const defaultDisplayShader = new Shader(
   ['height', 'water', 'cloud', 'sunlight', 'vegetation'],
   'display',
   /*glsl*/`
   if (cross_section_y > 0.) {
     ${crossSectionShaderText}
+  } else if (camera_angle > 0.) {
+    ${raymarchingShaderText}
   } else {
     ${topDownShaderText}
   }
