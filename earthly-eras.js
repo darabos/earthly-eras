@@ -54,6 +54,7 @@ const baseshader = {
       gl_Position = vec4(position, 1.0);
     }
   `,
+  glslVersion: THREE.GLSL3,
 };
 const predefs = /*glsl*/`
 // From https://observablehq.com/@flimsyhat/webgl-color-maps.
@@ -142,11 +143,12 @@ class Shader {
     uniform float time;
     uniform float speedup;
     ${extraHeader || ''}
+    out vec4 mygl_FragColor;
     void main() {
       vec4 o = vec4(0.0);
       vec2 pos = vpos;
       ${code}
-      gl_FragColor = o;
+      mygl_FragColor = o;
     }`,
     });
     this.render = time => {
@@ -290,6 +292,7 @@ function animate() {
   requestAnimationFrame(animate);
   const t = Math.pow(10, options.speedup);
   time += t;
+  options.camera_rotation += 0.001;
   if (t > 0.1) {
     for (tostep += t; tostep >= 1; --tostep) {
       for (const k in shaders) {
@@ -535,23 +538,56 @@ const raymarchingShaderText = /*glsl*/`
   // camera target
   vec3 ta = vec3(0., 0., 0.);
   mat3 ca = setCamera(ro, ta);
+  const float SCALE=6.;
   // ray direction
-  float fov = 1.2;
+  float fov = .5;
   vec3 rd = ca * normalize(vec3(2.*(pos - 0.5), 1./fov));
   o = vec4(ro+2.*rd,1.);
+  int found = 0;
+  vec3 hit;
   for (int i=0; i<200; i++) {
     vec3 p = ro + float(i)*0.01*rd;
     vec2 cell = vec2(floor(p.x * W)/W, floor(p.y * H)/H);
     if (abs(cell.x) > .5 || abs(cell.y) > .5) continue;
     cell += 0.5;
-    float h = texture2D(height, cell).r*0.3;
+    float h = texture2D(height, cell).r;
+    float w = max(0., texture2D(water, cell).r - ${soil});
     vec3 s = texture2D(sunlight, cell).rgb;
-    if (p.z>0. && p.z < h) {
-      // vec3 nor = normal(height, 0, cell);
-      // float dif = clamp(dot(nor, normalize(vec3(1., 2., 1.))), 0., 1.);
-      // o = vec4(float(i)/200.);
-      o = vec4(inferno(h*4.), 1.);//cell,1.,1.);
-      break;
+    float v = texture2D(vegetation, cell).r;
+
+    vec3 c = vec3(1.);
+    c.rb *= 1. - v;
+    c *= s;
+
+    // Underwater.
+    vec3 sea = vec3(0.01, 0.1, 0.3);
+    c *= sea / (sea + w);
+
+    if (p.z>0. && p.z*SCALE < h && found == 0) {
+      o = vec4(c, 1.);
+      // o = vec4(inferno(h*4.), 1.);
+      found = 1; // Break gives glitchy results.
+      hit = p;
+    }
+  }
+  if (found == 1) {
+    found = 0;
+    ro = hit;
+    float t = 20. * time;
+    vec3 timed_sun = vec3(cos(t), 0.1+0.8*sin(t), 2.+0.2*sin(t));
+    vec3 fixed_sun = normalize(vec3(1., 2., 1.));
+    rd = mix(fixed_sun, timed_sun, clamp(-1.-speedup, 0., 1.));
+    for (int i=3; i<200; i++) {
+      vec3 p = ro + float(i)*0.01*rd;
+      vec2 cell = vec2(floor(p.x * W)/W, floor(p.y * H)/H);
+      if (abs(cell.x) > .5 || abs(cell.y) > .5) continue;
+      cell += 0.5;
+      float h = texture2D(height, cell).r;
+      float w = max(0., texture2D(water, cell).r - ${soil});
+      if (p.z>0. && p.z*SCALE < h && found == 0) {
+        found = 1; // Break gives glitchy results.
+        o *= 0.5;
+      }
     }
   }
   `;
