@@ -539,14 +539,15 @@ const raymarchingShaderText = /*glsl*/`
   vec3 ta = vec3(0., 0., 0.);
   mat3 ca = setCamera(ro, ta);
   const float SCALE=6.;
+  const float RESOLUTION=100.;
   // ray direction
   float fov = .5;
   vec3 rd = ca * normalize(vec3(2.*(pos - 0.5), 1./fov));
   o = vec4(ro+2.*rd,1.);
   int found = 0;
   vec3 hit;
-  for (int i=0; i<200; i++) {
-    vec3 p = ro + float(i)*0.01*rd;
+  for (int i=0; i<int(RESOLUTION)*2; i++) {
+    vec3 p = ro + (pow(1.001, float(i)/RESOLUTION)-1.)*1000.*rd;
     vec2 cell = vec2(floor(p.x * W)/W, floor(p.y * H)/H);
     if (abs(cell.x) > .5 || abs(cell.y) > .5) continue;
     cell += 0.5;
@@ -570,6 +571,8 @@ const raymarchingShaderText = /*glsl*/`
       hit = p;
     }
   }
+  // Cast another ray toward the sun for the shadow.
+  // TODO: Put this in the sunlight shader.
   if (found == 1) {
     found = 0;
     ro = hit;
@@ -577,8 +580,8 @@ const raymarchingShaderText = /*glsl*/`
     vec3 timed_sun = vec3(cos(t), 0.1+0.8*sin(t), 2.+0.2*sin(t));
     vec3 fixed_sun = normalize(vec3(1., 2., 1.));
     rd = mix(fixed_sun, timed_sun, clamp(-1.-speedup, 0., 1.));
-    for (int i=3; i<200; i++) {
-      vec3 p = ro + float(i)*0.01*rd;
+    for (int i=3; i<int(RESOLUTION)*2; i++) {
+      vec3 p = ro + float(i)/RESOLUTION*rd;
       vec2 cell = vec2(floor(p.x * W)/W, floor(p.y * H)/H);
       if (abs(cell.x) > .5 || abs(cell.y) > .5) continue;
       cell += 0.5;
